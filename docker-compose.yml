@@ -1,0 +1,12 @@
+version: '3'
+services:
+  view:
+    build: ./view
+    container_name: "tracking-parking-view"
+    volumes:
+      - ./view:/app
+    command: sh -c "npm install && npm run dev"
+    ports:
+      - "3000:3000"
+    stdin_open: true
+    tty: true
