@@ -1,4 +1,15 @@
+import { Card } from '@mui/material'
 import Head from 'next/head'
+import Image from 'next/image'
+
+import { ParkingCard } from '@/components/common'
+import { ParkingData } from '@/components/common/ParkingCard/ParkingCard.type'
+
+const DUMMY_DATA: ParkingData[] = Array.from({ length: 20 }, (_, i) => ({
+  id: i,
+  currentCapacity: Math.floor(Math.random() * 100),
+  time: new Date(new Date().getTime() + i * 60000).toISOString(),
+}))
 
 export default function Home() {
   return (
@@ -10,8 +21,31 @@ export default function Home() {
         <link rel='icon' href='/favicon.png' />
       </Head>
       <main>
-        <div>
-          <p className='text-2xl text-slate-800'>Tracking Parking</p>
+        <div className='my-10 flex flex-col items-center'>
+          <Card
+            sx={{
+              width: 'fit-content',
+              p: '2rem',
+              mxnWidth: '90%',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '2rem',
+              alignItems: 'center',
+              boxShadow: '0 0 10px 0 rgba(0, 0, 0, 0.2)',
+            }}
+            className='bg-white text-textBlack'
+          >
+            <div className='w-4/5'>
+              <Image src='/images/map.png' alt='map' width={500} height={500} className='w-full' />
+            </div>
+            <div className='gird-cols-1 grid gap-5 md:grid-cols-3'>
+              <ParkingCard name='停車場1' maxCapacity={100} currentCapacity={50} data={DUMMY_DATA} />
+              <ParkingCard name='停車場1' maxCapacity={100} currentCapacity={100} data={DUMMY_DATA} />
+              <ParkingCard name='停車場1' maxCapacity={100} currentCapacity={50} data={DUMMY_DATA} />
+              <ParkingCard name='停車場1' maxCapacity={100} currentCapacity={50} data={DUMMY_DATA} />
+              <ParkingCard name='停車場1' maxCapacity={100} currentCapacity={50} data={DUMMY_DATA} />
+            </div>
+          </Card>
         </div>
       </main>
     </>

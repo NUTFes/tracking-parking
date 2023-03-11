@@ -7,10 +7,12 @@ module.exports = {
   content: ['./src/pages/**/*.{js,ts,jsx,tsx}', './src/components/**/*.{js,ts,jsx,tsx}'],
   theme: {
     colors: {
-      background: '#071A52',
-      primary: '#086972',
-      secondary: '#17B978',
-      accent: '#A7FF83',
+      background: '#F0EEED',
+      primary: '#332C39',
+      secondary: '#609EA2',
+      accent: '#C92C6D',
+      textWhite: colors.gray[200],
+      textBlack: colors.slate[800],
       black: colors.black,
       white: colors.white,
       slate: colors.slate,
