@@ -1,6 +1,5 @@
 # start
-1. clone repository
 
-2. build
+READ WIKI PLEASE
 
-`make build`
+https://github.com/NUTFes/tracking-parking/wiki
