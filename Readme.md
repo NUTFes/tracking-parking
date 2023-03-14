@@ -1,11 +1,5 @@
 # start
-1. clone repository
 
-2. build
+READ WIKI PLEASE
 
-```
-make build
-docker compose up -d
-```
-
-see `http://localhost:3000/`
+https://github.com/NUTFes/tracking-parking/wiki
