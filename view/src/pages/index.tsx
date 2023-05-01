@@ -1,4 +1,4 @@
-import { Card } from '@mui/material'
+import { Card, Typography } from '@mui/material'
 import Head from 'next/head'
 import Image from 'next/image'
 
@@ -38,6 +38,9 @@ export default function Home() {
             <div className='w-4/5'>
               <Image src='/images/map.png' alt='map' width={500} height={500} className='w-full' />
             </div>
+            <Typography variant='h5' fontWeight='bold'>
+              現在の駐車状況
+            </Typography>
             <div className='gird-cols-1 grid gap-5 md:grid-cols-3'>
               <ParkingCard name='停車場1' maxCapacity={100} currentCapacity={50} data={DUMMY_DATA} />
               <ParkingCard name='停車場1' maxCapacity={100} currentCapacity={100} data={DUMMY_DATA} />
