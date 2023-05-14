@@ -5,7 +5,7 @@ services:
     container_name: "tracking-parking-view"
     volumes:
       - ./view:/app
-    command: sh -c "npm install && npm run dev"
+    command: sh -c "yarn && yarn dev"
     ports:
       - "3000:3000"
     stdin_open: true
@@ -22,6 +22,8 @@ services:
     environment:
       MONGO_INITDB_ROOT_USERNAME: root
       MONGO_INITDB_ROOT_PASSWORD: password
+    ports:
+      - 27017:27017
     volumes:
       - mongo-db:/data/db
 
