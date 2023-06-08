@@ -8,25 +8,34 @@ import { Line } from 'react-chartjs-2'
 import { ParkingCardProps } from './ParkingCard.type'
 import { Modal } from '../Modal'
 
-
-const ParkingCard = ({ name, maxCapacity, currentCapacity, data }: ParkingCardProps) => {
+const ParkingCard = ({ name, maxCapacity, currentCapacity, data, dataLimit }: ParkingCardProps) => {
   Chart.register(...registerables)
 
+  const RecentData = useMemo(() => (dataLimit ? data && data.slice(-dataLimit) : data), [data, dataLimit])
+
   const [isOpen, setIsOpen] = useState(false)
-  const chartData = useMemo(() => ({
+  const chartData = useMemo(
+    () => ({
       labels:
-        data &&
-        data.map((d) => {
-          const date = new Date(d.time)
-          return `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`
-        }),
+        RecentData &&
+        RecentData.map((d) =>
+          new Date(d.time).toLocaleString('ja-JP', {
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+          }),
+        ),
       datasets: [
         {
           label: name,
-          data: data && data.map((d) => d.currentCapacity),
+          data: RecentData && RecentData.map((d) => d.count),
         },
       ],
-    }), [data, name])
+    }),
+    [RecentData, name],
+  )
 
   return (
     <>

@@ -1,12 +1,9 @@
-export interface ParkingData {
-  id: number
-  currentCapacity: number
-  time: string
-}
+import { Parking } from '@/type/parking.type'
 
 export interface ParkingCardProps {
   name: string
   maxCapacity: number
   currentCapacity: number
-  data?: ParkingData[]
+  data?: Parking[]
+  dataLimit?: number
 }
