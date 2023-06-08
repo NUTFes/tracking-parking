@@ -15,12 +15,12 @@ export const getServerSideProps = async () => {
     parkingNames.map(async (name) => {
       const url = `http://view:3000/api/parkings/${name}`
       const res = await fetch(url)
-      
+
       if (res.status !== 200) {
         throw new Error(`Failed to fetch ${url}`)
       }
-      const data = await res.json() as Parking[]
-      return { 
+      const data = (await res.json()) as Parking[]
+      return {
         name,
         data,
       }
@@ -58,7 +58,14 @@ export const Home: NextPage<Props> = ({ parkingData }: Props) => (
         </Typography>
         <div className='gird-cols-1 grid gap-5 md:grid-cols-3'>
           {parkingData.map(({ name, data }, index) => (
-            <ParkingCard key={name} name={name} currentCapacity={data[data.length-1].count} maxCapacity={parkingLimit[index]} data={data} />
+            <ParkingCard
+              key={name}
+              name={name}
+              currentCapacity={data[data.length - 1].count}
+              maxCapacity={parkingLimit[index]}
+              data={data}
+              dataLimit={20}
+            />
           ))}
         </div>
       </Card>
