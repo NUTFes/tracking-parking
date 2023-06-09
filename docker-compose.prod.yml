@@ -1,5 +1,11 @@
 version: "3"
 services:
+  cloudflare:
+    image: "cloudflare/cloudflared:latest"
+    container_name: "nutfes-trapa-web"
+    volumes: ["./web/prod:/home/nonroot/.cloudflared"]
+    command: tunnel run
+
   view:
     build: ./view
     container_name: "tracking-parking-view"
