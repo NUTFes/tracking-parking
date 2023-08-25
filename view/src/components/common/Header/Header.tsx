@@ -13,7 +13,7 @@ const Header = () => (
     }}
     className='bg-primary text-textWhite'
   >
-    TrackingParking
+    駐車場管理システム
   </AppBar>
 )
 
