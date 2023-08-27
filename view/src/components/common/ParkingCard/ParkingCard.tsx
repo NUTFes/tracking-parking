@@ -78,7 +78,6 @@ const ParkingCard = ({ name, maxCapacity, currentCapacity, data, dataLimit }: Pa
             gap: '1rem',
             minWidth: '300px',
           }}
-          // hoverしたら浮かして影をつける
           className='transition-all hover:-translate-y-1 hover:shadow-lg'
         >
           <h1 className='mr-auto text-xl font-bold'>{name}</h1>

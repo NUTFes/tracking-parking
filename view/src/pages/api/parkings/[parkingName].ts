@@ -8,7 +8,7 @@ const handler = async (req: NextApiRequest, res: NextApiResponse) => {
     const { method } = req
     const { parkingName } = req.query
     if (typeof parkingName !== 'string') throw new Error('parkingName is not string')
-    if (!isParkingName(parkingName)) throw new Error('parkingName is not valid')
+    if (!isParkingName(parkingName)) throw new Error('parkingName is not found')
 
     switch (method) {
       case 'GET': {
@@ -19,7 +19,7 @@ const handler = async (req: NextApiRequest, res: NextApiResponse) => {
         break
       }
       default:
-        res.setHeader('Allow', ['GET', 'PUT'])
+        res.setHeader('Allow', ['GET'])
         if (method) res.status(405).end(`Method ${method} Not Allowed`)
         else res.status(405).end(`Method Not Allowed`)
     }
