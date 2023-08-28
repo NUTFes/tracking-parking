@@ -17,7 +17,7 @@ services:
     stdin_open: true
     tty: true
     environment:
-      - NEXT_PUBLIC_MONGODB_URI=MONGODB_URI=mongodb://root:password@mongo:27017/test?authSource=admin
+      - NEXT_PUBLIC_MONGODB_URI=mongodb://root:password@mongo:27017/test?authSource=admin
       - NEXT_PUBLIC_MONGODB_DB=tracking_parking
     depends_on:
       - mongo
