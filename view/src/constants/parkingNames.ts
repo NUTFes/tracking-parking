@@ -9,21 +9,21 @@ export const parkings = [
     name: 'bionics',
     limit: 40,
   },
-  {
-    nameJP: '電気',
-    name: 'electronics',
-    limit: 44,
-  },
+  // {
+  //   nameJP: '電気',
+  //   name: 'electronics',
+  //   limit: 44,
+  // },
   {
     nameJP: '講義棟西1',
     name: 'lecture_west1',
     limit: 48,
   },
-  {
-    nameJP: '講義棟西2',
-    name: 'lecture_west2',
-    limit: 44,
-  },
+  // {
+  //   nameJP: '講義棟西2',
+  //   name: 'lecture_west2',
+  //   limit: 44,
+  // },
   {
     nameJP: '講義棟北',
     name: 'lecture_north',
