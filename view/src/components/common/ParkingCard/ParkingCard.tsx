@@ -82,15 +82,13 @@ const ParkingCard = ({ name, maxCapacity, currentCapacity, data, dataLimit }: Pa
           <div className='flex flex-row items-center justify-around'>
             <div className='flex flex-col items-center justify-center'>
               <p
-                className={`${
-                  currentCapacity === maxCapacity ? 'text-accent' : 'text-secondary'
-                } m-3 text-3xl font-bold`}
+                className={`${currentCapacity < maxCapacity ? 'text-secondary' : 'text-accent'} m-3 text-3xl font-bold`}
               >
                 {currentCapacity} 台
               </p>
               <p className='text-sm'>/ {maxCapacity} 台中</p>
             </div>
-            {currentCapacity === maxCapacity ? (
+            {currentCapacity < maxCapacity ? (
               <CheckCircleIcon fontSize='large' className='text-secondary' />
             ) : (
               <CancelIcon fontSize='large' className='text-accent' />
