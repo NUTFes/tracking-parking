@@ -14,11 +14,11 @@ export const parkings = [
   //   name: 'electronics',
   //   limit: 44,
   // },
-  {
-    nameJP: '講義棟西1',
-    name: 'lecture_west1',
-    limit: 48,
-  },
+  // {
+  //   nameJP: '講義棟西1',
+  //   name: 'lecture_west1',
+  //   limit: 48,
+  // },
   // {
   //   nameJP: '講義棟西2',
   //   name: 'lecture_west2',
@@ -27,7 +27,8 @@ export const parkings = [
   {
     nameJP: '講義棟北',
     name: 'lecture_north',
-    limit: 44 + 159, // 講義棟北2, 3の合計
+    // limit: 44 + 159, // 講義棟北2, 3の合計
+    limit: 100,
   },
 ]
 
