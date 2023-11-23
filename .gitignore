@@ -1,3 +1,4 @@
 mongo/
 web/
 venv-trapa/
+__pycache__/
