@@ -15,12 +15,16 @@ import random
 import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
+from dotenv import load_dotenv
+import os
 
+load_dotenv()
+HOME_DIR = os.environ['HOME_DIR']
 
 class NumberPlate:
     def __init__(self):
-        self.__fontFace_0 = "./home/keisuke/tracking-parking/raspberryPi/resorces/TrmFontJB.ttf"
-        self.__fontFace_1 = "./hiiragi_marugo_ProN_W4.ttc"
+        self.__fontFace_0 = HOME_DIR + "/raspberryPi/resorces/highway_JA_ver4.otf"
+        self.__fontFace_1 = HOME_DIR + "/raspberryPi/resorces/nexcogotic_ver_4.otf"
 
         black = (0, 0, 0)
         green = (0, 60, 0)
