@@ -23,8 +23,8 @@ HOME_DIR = os.environ['HOME_DIR']
 
 class NumberPlate:
     def __init__(self):
-        self.__fontFace_0 = HOME_DIR + "/raspberryPi/resorces/highway_JA_ver4.otf"
-        self.__fontFace_1 = HOME_DIR + "/raspberryPi/resorces/nexcogotic_ver_4.otf"
+        self.__fontFace_0 = HOME_DIR +"/raspberryPi/resorces/TrmFontJB.ttf"
+        self.__fontFace_1 = HOME_DIR + "/raspberryPi/resorces/BIZ-UDGOTHICB.TTC"
 
         black = (0, 0, 0)
         green = (0, 60, 0)
