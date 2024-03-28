@@ -1,2 +1,7 @@
 mongo/
 web/
+trapa/
+__pycache__/
+*.env
+*.yaml
+.DS_store
