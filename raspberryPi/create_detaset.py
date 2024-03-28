@@ -28,7 +28,7 @@ CLASS_NAME = [
 
 COLORS = [(0, 0, 175), (175, 0, 0), (0, 175, 0), (175, 0, 175)]
 
-BACKGROUND_IMAGE_PATH = HOME_DIR + "/raspberryPi/resorces/dataset/background_images"
+BACKGROUND_IMAGE_PATH = HOME_DIR + "/raspberryPi/resorces/dataset/background"
 TARGET_IMAGE_PATH = HOME_DIR + "/raspberryPi/resorces/dataset/output_png"
 OUTPUT_PATH = HOME_DIR + "/raspberryPi/resorces/dataset/output_ground_truth"
 
@@ -47,8 +47,8 @@ class Background:
         self.__backPath = backPath
 
     def get(self):
-        print(glob.glob(self.__backPath + "/*.png"))
-        imagePath = random.choice(glob.glob(self.__backPath + "/*.png"))
+        print(glob.glob(self.__backPath + "/*.jpg"))
+        imagePath = random.choice(glob.glob(self.__backPath + "/*.jpg"))
         return cv2.imread(imagePath, cv2.IMREAD_UNCHANGED)
 
 
@@ -376,13 +376,30 @@ def main():
         shutil.rmtree(OUTPUT_PATH)
     os.mkdir(OUTPUT_PATH)
 
+    print("出力先初期化完了")
+
     target = Target(TARGET_IMAGE_PATH, BASE_WIDTH, CLASS_NAME)
+
+    print("Target Done")
+
     background = Background(BACKGROUND_IMAGE_PATH)
 
+    print("Background Done")
+
     transformer = Transformer(BACK_WIDTH, BACK_HEIGHT)
+
+    print("Transformer DOne")
     manifest = Manifest(CLASS_NAME)
+
+    print("manifest Done")
+
     counter = Counter(len(CLASS_NAME))
+
+    print("Counter DOne")
+
     effecter = Effecter()
+
+    print("effecter Done")
 
     no = 0
 
