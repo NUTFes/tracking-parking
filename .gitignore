@@ -1,5 +1,5 @@
 mongo/
 web/
-venv-trapa/
+trapa/
 __pycache__/
 *.env
