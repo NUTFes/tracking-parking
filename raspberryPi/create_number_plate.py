@@ -6,9 +6,14 @@ category=0 # 0:普通車（自家用） 1:普通車（事業用） 2:軽自動�
 
 number_plate = NumberPlate()
 img = number_plate.generate(category)
-print(img)
+#print(img)
 
 # imgに画像のデータがはいっているから、これを保存すると画像になる
 # 実行するとtest.pngが生成されるからやってみて
-cv2.imwrite('./test.jpg', img)
+#cv2.imwrite('./test.jpg', img)
 
+for i in range (3):
+    category=i
+    for j in range (10000):
+        img = number_plate.generate(category)
+        cv2.imwrite(f'/Users/yamadakeisuke/trapa/tracking-parking/raspberryPi/resorces/create_nuber_plates/img{i}.{j}.jpg' ,img)
