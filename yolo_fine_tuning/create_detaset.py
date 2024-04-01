@@ -1,23 +1,23 @@
 """
 ナンバープレートを生成しアフィン変換して背景と合成することでGround Truth形式のデータセットを作成する
 """
-import json
-import glob
-import random
-import os
-import shutil
-import math
-import numpy as np
-import cv2
-from PIL import Image
-from number_plate import NumberPlate
 
+import glob
+import json
+import os
+import random
+import shutil
+
+import cv2
+import numpy as np
 from dotenv import load_dotenv
+from number_plate import NumberPlate
+from PIL import Image
 
 MAX = 30000  # 生成する画像数
 
 load_dotenv()
-HOME_DIR = os.environ['HOME_DIR']
+HOME_DIR = os.environ["HOME_DIR"]
 
 CLASS_NAME = [
     "PRIVATE_STANDARD",
@@ -28,9 +28,9 @@ CLASS_NAME = [
 
 COLORS = [(0, 0, 175), (175, 0, 0), (0, 175, 0), (175, 0, 175)]
 
-BACKGROUND_IMAGE_PATH = HOME_DIR + "/raspberryPi/resorces/dataset/background"
-TARGET_IMAGE_PATH = HOME_DIR + "/raspberryPi/resorces/dataset/output_png"
-OUTPUT_PATH = HOME_DIR + "/raspberryPi/resorces/dataset/output_ground_truth"
+BACKGROUND_IMAGE_PATH = HOME_DIR + "/yolo_fine_tuning/resorces/dataset/background"
+TARGET_IMAGE_PATH = HOME_DIR + "/yolo_fine_tuning/resorces/dataset/output_png"
+OUTPUT_PATH = HOME_DIR + "/yolo_fine_tuning/resorces/dataset/output_ground_truth"
 
 S3Bucket = "s3://ground_truth_dataset"
 manifestFile = "output.manifest"
