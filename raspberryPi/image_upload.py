@@ -39,7 +39,7 @@ class GoogleDriveFacade:
     def upload(self, 
                local_file_path: str,
                save_folder_name: str = 'sample',
-               is_convert : bool=True,
+               is_convert : bool=False,
         ):
         
         if save_folder_name:
@@ -62,9 +62,13 @@ class GoogleDriveFacade:
         
 if __name__ == "__main__":
     g = GoogleDriveFacade()
-    g.upload(
-        local_file_path='hoge.txt',
-        save_folder_name="test",
-        is_convert=True,
+    for i in range (3):
+        for j in range (10000):
+            local_file_path='./resorces/create_nuber_plates/img' + str(i) + "_" + str(j) + '.jpg'
+            print(local_file_path)
+            g.upload(
+                local_file_path='./resorces/create_nuber_plates/img' + str(i) + "_" + str(j) + '.jpg',
+                save_folder_name="test5",
+                is_convert=False,
     )
 
