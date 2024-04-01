@@ -64,10 +64,10 @@ if __name__ == "__main__":
     g = GoogleDriveFacade()
     for i in range (3):
         for j in range (10000):
-            local_file_path='./resorces/create_nuber_plates/img' + str(i) + "." + str(j) + '.jpg'
+            local_file_path='./resorces/create_nuber_plates/img' + str(i) + "_" + str(j) + '.jpg'
             print(local_file_path)
             g.upload(
-                local_file_path='./resorces/create_nuber_plates/img' + str(i) + "." + str(j) + '.jpg',
+                local_file_path='./resorces/create_nuber_plates/img' + str(i) + "_" + str(j) + '.jpg',
                 save_folder_name="test5",
                 is_convert=False,
     )
