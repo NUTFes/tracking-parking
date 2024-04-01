@@ -11,20 +11,23 @@ category: 分類
 2:自家用軽自動車
 3:事業用軽自動車
 """
+
+import os
 import random
+
 import cv2
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont
 from dotenv import load_dotenv
-import os
+from PIL import Image, ImageDraw, ImageFont
 
 load_dotenv()
-HOME_DIR = os.environ['HOME_DIR']
+HOME_DIR = os.environ["HOME_DIR"]
+
 
 class NumberPlate:
     def __init__(self):
-        self.__fontFace_0 = HOME_DIR +"/raspberryPi/resorces/TrmFontJB.ttf"
-        self.__fontFace_1 = HOME_DIR + "/raspberryPi/resorces/BIZ-UDGOTHICB.TTC"
+        self.__fontFace_0 = HOME_DIR + "/yolo_fine_tuning/resorces/TrmFontJB.ttf"
+        self.__fontFace_1 = HOME_DIR + "/yolo_fine_tuning/resorces/BIZ-UDGOTHICB.TTC"
 
         black = (0, 0, 0)
         green = (0, 60, 0)
