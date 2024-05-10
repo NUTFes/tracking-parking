@@ -84,9 +84,9 @@ const ParkingCard = ({ name, maxCapacity, currentCapacity, data, dataLimit }: Pa
               <p
                 className={`${currentCapacity < maxCapacity ? 'text-secondary' : 'text-accent'} m-3 text-3xl font-bold`}
               >
-                {currentCapacity} 台
+                {currentCapacity} 人
               </p>
-              <p className='text-sm'>/ {maxCapacity} 台中</p>
+              <p className='text-sm'>/ {maxCapacity} 人中</p>
             </div>
             {currentCapacity < maxCapacity ? (
               <CheckCircleIcon fontSize='large' className='text-secondary' />
