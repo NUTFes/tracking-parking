@@ -5,3 +5,5 @@ __pycache__/
 *.env
 *.yaml
 .DS_store
+/sahi
+.env
