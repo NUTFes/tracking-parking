@@ -1,14 +1,14 @@
 export const parkings = [
   {
-    nameJP: '中央',
-    name: 'central',
-    limit: 96,
+    nameJP: '技育博',
+    name: 'gikuhaku',
+    limit: 100,
   },
-  {
-    nameJP: '生物',
-    name: 'bionics',
-    limit: 40,
-  },
+  // {
+  //   nameJP: '生物',
+  //   name: 'bionics',
+  //   limit: 40,
+  // },
   // {
   //   nameJP: '電気',
   //   name: 'electronics',
@@ -24,12 +24,12 @@ export const parkings = [
   //   name: 'lecture_west2',
   //   limit: 44,
   // },
-  {
-    nameJP: '講義棟北',
-    name: 'lecture_north',
-    // limit: 44 + 159, // 講義棟北2, 3の合計
-    limit: 100,
-  },
+  // {
+  //   nameJP: '講義棟北',
+  //   name: 'lecture_north',
+  //   // limit: 44 + 159, // 講義棟北2, 3の合計
+  //   limit: 100,
+  // },
 ]
 
 export type ParkingName = (typeof parkings)[number]['name']
