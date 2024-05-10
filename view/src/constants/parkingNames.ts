@@ -2,7 +2,7 @@ export const parkings = [
   {
     nameJP: '技育博',
     name: 'gikuhaku',
-    limit: 100,
+    limit: 101,
   },
   // {
   //   nameJP: '生物',

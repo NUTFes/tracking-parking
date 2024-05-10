@@ -41,10 +41,10 @@ const ParkingCard = ({ name, maxCapacity, currentCapacity, data, dataLimit }: Pa
         <div className='flex flex-col items-center justify-center'>
           <div className='flex flex-row items-end gap-3'>
             <p className={`${currentCapacity === maxCapacity ? 'text-accent' : 'text-secondary'} text-3xl font-bold`}>
-              {currentCapacity} 台
+              {currentCapacity} 人
             </p>
             <p> / </p>
-            <p>{maxCapacity} 台</p>
+            <p>{maxCapacity} 人</p>
           </div>
 
           <Line
