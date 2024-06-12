@@ -5,3 +5,6 @@ __pycache__/
 *.env
 *.yaml
 .DS_store
+/sahi
+.env
+raspi/result/prediction_visual.png
