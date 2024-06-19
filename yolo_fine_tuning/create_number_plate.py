@@ -1,7 +1,8 @@
-from number_plate import NumberPlate
-from dotenv import load_dotenv
 import os
+
 import cv2
+from dotenv import load_dotenv
+from number_plate import NumberPlate
 
 load_dotenv()
 HOME_DIR = os.environ["HOME_DIR"]
@@ -9,7 +10,6 @@ HOME_DIR = os.environ["HOME_DIR"]
 category = (
     0  # 0:普通車（自家用） 1:普通車（事業用） 2:軽自動車（自家用） 3:軽自動車（事業用）
 )
-
 
 number_plate = NumberPlate()
 img = number_plate.generate(category)

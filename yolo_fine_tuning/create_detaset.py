@@ -461,8 +461,8 @@ def main():
             break
 
         # 表示（確認用）
-        cv2.imshow("frame", frame)
-        cv2.waitKey(1)
+        # cv2.imshow("frame", frame)
+        # cv2.waitKey(1)
 
     # manifest 保存
     with open("{}/{}".format(OUTPUT_PATH, manifestFile), "w") as f:
