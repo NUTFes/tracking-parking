@@ -3,7 +3,7 @@ import os
 import shutil
 
 # 定義
-inputPath = "./dataset/output_ground_truth"
+inputPath = "./resorces/dataset/output_ground_truth"
 # outputPath = "./dataset/yolo"
 outputPath = "./yolo"
 manifest = "output.manifest"
