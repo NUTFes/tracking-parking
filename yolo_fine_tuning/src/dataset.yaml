@@ -1,0 +1,4 @@
+train: /home/ichinose/workspace/tracking-parking/yolo_fine_tuning/yolo/train/       # 訓練データセットのディレクトリ
+val: /home/ichinose/workspace/tracking-parking/yolo_fine_tuning/yolo/valid/         # 検証データセットのディレクトリ
+nc: 4                     # クラス数（例えば、ナンバープレートが1種類のみの場合）
+names: ['OrdinaryCarHomeUse','OrdinaryCarBusiness','Light-weightMotorisedVehicleHomeUse','light-weightautobusiness']   # クラス名のリスト
