@@ -2,8 +2,13 @@ import json
 import os
 import shutil
 
+from dotenv import load_dotenv
+
+load_dotenv()
+HOME_DIR = os.environ["HOME_DIR"]
+
 # 定義
-inputPath = "./resorces/dataset/output_ground_truth"
+inputPath = HOME_DIR + "/yolo_fine_tuning/resorces/dataset/output_ground_truth"
 # outputPath = "./dataset/yolo"
 outputPath = "./yolo"
 manifest = "output.manifest"

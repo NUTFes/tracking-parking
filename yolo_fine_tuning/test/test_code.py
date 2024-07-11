@@ -1,11 +1,15 @@
+import os
+
 import cv2
+from dotenv import load_dotenv
 from ultralytics import YOLO
 
+load_dotenv()
+HOME_DIR = os.environ["HOME_DIR"]
+
 # パス設定
-PATH = "/home/ichinose/workspace/tracking-parking/yolo_fine_tuning/runs/detect/train14/weights/best.pt"
-TEST_FILE = (
-    "/home/ichinose/workspace/tracking-parking/yolo_fine_tuning/test/test_img_1.jpg"
-)
+PATH = HOME_DIR + "/yolo_fine_tuning/runs/detect/train14/weights/best.pt"
+TEST_FILE = HOME_DIR + "/yolo_fine_tuning/test/test_img_1.jpg"
 
 # 設定
 confidence = 0.8
@@ -65,7 +69,13 @@ for obj in detected_objects:
         f"Label: {obj['label']}, Confidence: {obj['confidence']:.2f}, Box: {obj['box']}"
     )
 
-# 画像表示
-cv2.imshow("Detected Image", img)
-cv2.waitKey(0)
+# 画像表示とCtrl+Cによる停止
+try:
+    while True:
+        cv2.imshow("Detected Image", img)
+        if cv2.waitKey(1) & 0xFF == ord("q"):
+            break
+except KeyboardInterrupt:
+    print("Interrupted by user")
+
 cv2.destroyAllWindows()
