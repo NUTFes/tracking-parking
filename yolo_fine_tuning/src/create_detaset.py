@@ -11,7 +11,7 @@ import shutil
 import cv2
 import numpy as np
 from dotenv import load_dotenv
-from number_plate import NumberPlate
+from yolo_fine_tuning.src.number_plate import NumberPlate
 from PIL import Image
 
 MAX = 30000  # 生成する画像数

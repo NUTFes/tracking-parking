@@ -2,7 +2,7 @@ import os
 
 import cv2
 from dotenv import load_dotenv
-from number_plate import NumberPlate
+from yolo_fine_tuning.src.number_plate import NumberPlate
 
 load_dotenv()
 HOME_DIR = os.environ["HOME_DIR"]

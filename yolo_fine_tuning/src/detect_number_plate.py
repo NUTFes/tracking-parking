@@ -2,7 +2,7 @@ import glob
 import os
 
 import cv2
-import ocr
+import yolo_fine_tuning.src.ocr as ocr
 from ultralytics import YOLO
 
 confidence = 0.8
