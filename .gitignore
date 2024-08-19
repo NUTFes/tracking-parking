@@ -5,6 +5,7 @@ __pycache__/
 *.env
 *.yaml
 .DS_store
+!dataset.yaml
 /sahi
 .env
 raspi/result/prediction_visual.png
