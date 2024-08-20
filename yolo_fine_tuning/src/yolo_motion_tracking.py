@@ -3,13 +3,13 @@ import os
 from dotenv import load_dotenv
 from ultralytics import YOLO
 
-# 動画ファイルのパス
-video_path = 'testVideo/tra-pa_motion_test.mp4'
-
 # パス設定
 load_dotenv()
 HOME_DIR = os.environ["HOME_DIR"]
 PATH = HOME_DIR + "/yolo_fine_tuning/runs/detect/train14/weights/best.pt"
+
+# 動画ファイルのパス
+video_path = VIDEO_PATH = HOME_DIR + "/yolo_fine_tuning/src/testVideo/tra-pa_motion_test.mp4"
 
 # Yoloモデルのロード
 model = YOLO(PATH)
