@@ -26,11 +26,12 @@ while(cap.isOpened()):
     ret, frame = cap.read()
     if ret:
         # フレームごとに物体検知を行う
-        results = model(frame)
+        results = model.track(frame, persist=True)
         
         # 検知結果を描画
         annotated_frame = results[0].plot()
-        
+        print('ID list: ', list(map(int, results[0].boxes.id)))
+
         # 出力動画にフレームを書き込む
         out.write(annotated_frame)
         
@@ -42,6 +43,7 @@ while(cap.isOpened()):
             break
     else:
         break
+
 
 # リソースの解放
 cap.release()
