@@ -9,7 +9,7 @@ HOME_DIR = os.environ["HOME_DIR"]
 PATH = HOME_DIR + "/yolo_fine_tuning/runs/detect/train14/weights/best.pt"
 
 # 動画ファイルのパス
-video_path = VIDEO_PATH = HOME_DIR + "/yolo_fine_tuning/src/testVideo/tra-pa_motion_test.mp4"
+video_path = VIDEO_PATH = HOME_DIR + "/yolo_fine_tuning/src/testVideo/tra-pa_motion_test_multi.mp4"
 
 # Yoloモデルのロード
 model = YOLO(PATH)
@@ -26,11 +26,13 @@ while(cap.isOpened()):
     ret, frame = cap.read()
     if ret:
         # フレームごとに物体検知を行う
-        results = model(frame)
+        results = model.track(frame, persist=True)
         
         # 検知結果を描画
         annotated_frame = results[0].plot()
-        
+        idList = list(map(int, results[0].boxes.id)) if results[0].boxes.id is not None else []
+        print("id: ", idList)
+
         # 出力動画にフレームを書き込む
         out.write(annotated_frame)
         
@@ -42,6 +44,7 @@ while(cap.isOpened()):
             break
     else:
         break
+
 
 # リソースの解放
 cap.release()
