@@ -6,11 +6,12 @@ from bleak import BleakClient, BleakError, BleakScanner
 ESP32_UUIDs = ["08:B6:1F:B9:4F:FA"]
 
 # ESP側のサービスのUUID
-# RX_UUID = 'beb5483e-36e1-4688-b7f5-ea07361b26a8'  # RX Characteristic UUID (from ESP32 to Computer)
 RX_UUID = "69ddb59c-d601-4ea4-ba83-44f679a670ba"  # RX Characteristic UUID (from ESP32 to Computer)
 
 
 # コールバック関数: データが送信されたときに呼び出されます
+# 0: なんもいないよ〜
+# 1: きたよ〜ん
 def notification_handler(sender: int, data: bytearray, **_kwargs):
     print(f"Received: {data.decode()} (from {sender})")
 
