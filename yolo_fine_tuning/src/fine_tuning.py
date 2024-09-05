@@ -6,7 +6,7 @@ from ultralytics import YOLO
 load_dotenv()
 HOME_DIR = os.environ["HOME_DIR"]
 
-model = YOLO("yolov8l.pt")
+model = YOLO("yolov8s.pt")
 model.train(
     data=HOME_DIR + "/yolo_fine_tuning/yolo/dataset.yaml",
     epochs=5,
