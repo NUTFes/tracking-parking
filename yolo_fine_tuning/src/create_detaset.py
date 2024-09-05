@@ -11,7 +11,7 @@ import shutil
 import cv2
 import numpy as np
 from dotenv import load_dotenv
-from yolo_fine_tuning.src.number_plate import NumberPlate
+from number_plate import NumberPlate
 from PIL import Image
 
 MAX = 30000  # 生成する画像数
@@ -19,12 +19,7 @@ MAX = 30000  # 生成する画像数
 load_dotenv()
 HOME_DIR = os.environ["HOME_DIR"]
 
-CLASS_NAME = [
-    "PRIVATE_STANDARD",
-    "BUS_STANDAR",
-    "PRIVATE_LIGHT_VEHICLE",
-    "BUS_LIGHT_VEHICLE",
-]
+CLASS_NAME = ["number_plate", "number_plate", "number_plate", "number_plate"]
 
 COLORS = [(0, 0, 175), (175, 0, 0), (0, 175, 0), (175, 0, 175)]
 
@@ -36,9 +31,9 @@ S3Bucket = "s3://ground_truth_dataset"
 manifestFile = "output.manifest"
 
 
-BASE_WIDTH = 440  # ナンバープレートの基本サイズは、背景画像とのバランスより、横幅を440を基準とする
-BACK_WIDTH = 1280  # 背景画像ファイルのサイズを合わせる必要がある
-BACK_HEIGHT = 960  # 背景画像ファイルのサイズを合わせる必要がある
+BASE_WIDTH = 192  # ナンバープレートの基本サイズは、背景画像とのバランスより、横幅を440を基準とする
+BACK_WIDTH = 1920  # 背景画像ファイルのサイズを合わせる必要がある
+BACK_HEIGHT = 1080  # 背景画像ファイルのサイズを合わせる必要がある
 
 
 # 背景画像取得クラス
