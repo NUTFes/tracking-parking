@@ -1,5 +1,5 @@
 *.pt filter=lfs diff=lfs merge=lfs -text
 yolo_fine_tuning/runs/detect/train14/weights/last.pt filter=lfs diff=lfs merge=lfs -text
 yolo_fine_tuning/runs/detect/train14/weights/best.pt filter=lfs diff=lfs merge=lfs -text
-yolo_fine_tuning/runs/detect/m-640^2/weights/last.pt filter=lfs diff=lfs merge=lfs -text
-yolo_fine_tuning/runs/detect/m-640^2/weights/best.pt filter=lfs diff=lfs merge=lfs -text
+yolo_fine_tuning/runs/detect/m-640-FHD/weights/last.pt filter=lfs diff=lfs merge=lfs -text
+yolo_fine_tuning/runs/detect/m-640-FHD/weights/best.pt filter=lfs diff=lfs merge=lfs -text
