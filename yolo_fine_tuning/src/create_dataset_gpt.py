@@ -14,13 +14,14 @@ from dotenv import load_dotenv
 from number_plate import NumberPlate
 from PIL import Image
 
-# MAX = 30000  # 生成する画像数
-MAX = 100  # 生成する画像数
+MAX = 30000  # 生成する画像数
+# MAX = 10  # 生成する画像数
 
 load_dotenv()
 HOME_DIR = os.environ["HOME_DIR"]
 
-CLASS_NAME = ["number_plate", "number_plate", "number_plate", "number_plate"]
+# クラス名は1つだけ、クラスIDは0
+CLASS_NAME = ["number_plate"]
 
 COLORS = [(0, 0, 175), (175, 0, 0), (0, 175, 0), (175, 0, 175)]
 
@@ -30,7 +31,6 @@ OUTPUT_PATH = HOME_DIR + "/yolo_fine_tuning/resorces/dataset/output_ground_truth
 
 S3Bucket = "s3://ground_truth_dataset"
 manifestFile = "output.manifest"
-
 
 BASE_WIDTH = 144  # ナンバープレートの基本サイズは、背景画像とのバランスより、横幅を440を基準とする
 BACK_WIDTH = 1920  # 背景画像ファイルのサイズを合わせる必要がある
@@ -56,27 +56,23 @@ class Target:
         self.__class_name = class_name
         self.__number_plate = NumberPlate()
 
-    def get(self, class_id):
-        # 対象画像
-        class_name = self.__class_name[class_id]
-        target_image = number_plate = self.__number_plate.generate(class_id)
+    def get(self):
+        # クラスIDは常に0に統一
+        class_id = 0
+        target_image = number_plate = self.__number_plate.generate(random.randint(0, 3))
 
         # 透過PNGへの変換
-        # Point 1: 白色部分に対応するマスク画像を生成
         mask = np.all(target_image[:, :, :] == [255, 255, 255], axis=-1)
-        # Point 2: 元画像をBGR形式からBGRA形式に変換
         target_image = cv2.cvtColor(target_image, cv2.COLOR_BGR2BGRA)
-        # Point3: マスク画像をもとに、白色部分を透明化
         target_image[mask, 3] = 0
 
-        # 基準（横）サイズに基づきリサイズ
         h, w, _ = target_image.shape
         aspect = h / w
         target_image = cv2.resize(
             target_image, (int(self.__base_width * aspect), self.__base_width)
         )
 
-        return target_image
+        return target_image, class_id
 
 
 # 変換クラス
@@ -87,11 +83,7 @@ class Transformer:
         self.__min_scale = 0.1
         self.__max_scale = 1
 
-    # distonation UP:0,DOWN;1,LEFT:2,RIGHT:3
-    # ratio: UP/DOWN 0 〜 0.1
-    # ratio: LEFT/RIGHT 0 〜 0.3
     def __affine(self, target_image, ratio, distnatoin):
-        # アフィン変換（上下、左右から見た傾き）
         h, w, _ = target_image.shape
         if distnatoin == 0:
             distortion_w = int(ratio * w)
@@ -103,7 +95,6 @@ class Transformer:
             y2 = 0
             y3 = 0
             y4 = h
-            # 変換後のイメージのサイズ
             ww = w + distortion_w
             hh = h
         elif distnatoin == 1:
@@ -116,7 +107,6 @@ class Transformer:
             y2 = 0
             y3 = 0
             y4 = h
-            # 変換後のイメージのサイズ
             ww = w + distortion_w
             hh = h
         elif distnatoin == 2:
@@ -129,7 +119,6 @@ class Transformer:
             y2 = 0 - int(distortion_h * 0.6)
             y3 = 0
             y4 = h - distortion_h
-            # 変換後のイメージのサイズ
             ww = w
             hh = h + int(distortion_h * 1.3)
         elif distnatoin == 3:
@@ -142,7 +131,6 @@ class Transformer:
             y2 = 0
             y3 = 0 - distortion_h
             y4 = h
-            # 変換後のイメージのサイズ
             ww = w
             hh = h + int(distortion_h * 1.3)
 
@@ -160,25 +148,17 @@ class Transformer:
         return (target_image, ww, hh)
 
     def warp(self, target_image):
-        # サイズ変更
         target_image = self.__resize(target_image)
-
-        # アフィン変換
-        # distonation UP:0,DOWN;1,LEFT:2,RIGHT:3
-        # ratio: UP/DOWN max:0.1
-        # ratio: LEFT/RIGHT max:0.3
         ratio = random.uniform(0, 0.1)
         distonation = random.randint(0, 3)
         if distonation == 2 or distonation == 3:
             ratio = random.uniform(0, 0.3)
         (target_image, w, h) = self.__affine(target_image, ratio, distonation)
 
-        # 配置位置決定
         left = random.randint(0, self.__width - w)
         top = random.randint(0, self.__height - h)
         rect = ((left, top), (left + w, top + h))
 
-        # 背景面との合成
         new_image = self.__synthesize(target_image, left, top)
         return (new_image, rect)
 
@@ -186,18 +166,6 @@ class Transformer:
         scale = random.uniform(self.__min_scale, self.__max_scale)
         w, h, _ = img.shape
         return cv2.resize(img, (int(w * scale), int(h * scale)))
-
-    def __rote(self, target_image, angle):
-        h, w, _ = target_image.shape
-        rate = h / w
-        scale = 1
-        if rate < 0.9 or 1.1 < rate:
-            scale = 0.9
-        elif rate < 0.8 or 1.2 < rate:
-            scale = 0.6
-        center = (int(w / 2), int(h / 2))
-        trans = cv2.getRotationMatrix2D(center, angle, scale)
-        return cv2.warpAffine(target_image, trans, (w, h))
 
     def __synthesize(self, target_image, left, top):
         background_image = np.zeros((self.__height, self.__width, 4), np.uint8)
@@ -208,11 +176,9 @@ class Transformer:
 
 
 class Effecter:
-    # Gauss
     def gauss(self, img, level):
         return cv2.blur(img, (level * 2 + 1, level * 2 + 1))
 
-    # Noise
     def noise(self, img):
         img = img.astype("float64")
         img[:, :, 0] = self.__single_channel_noise(img[:, :, 0])
@@ -231,8 +197,6 @@ class Effecter:
 
 
 # バウンディングボックス描画
-
-
 def box(frame, rect, class_id):
     ((x1, y1), (x2, y2)) = rect
     label = "{}".format(CLASS_NAME[class_id])
@@ -251,7 +215,6 @@ def box(frame, rect, class_id):
     return img
 
 
-# 背景と商品の合成
 def marge_image(background_image, front_image):
     back_pil = Image.fromarray(background_image)
     front_pil = Image.fromarray(front_image)
@@ -259,13 +222,10 @@ def marge_image(background_image, front_image):
     return np.array(back_pil)
 
 
-# Manifest生成クラス
 class Manifest:
     def __init__(self, class_name):
         self.__lines = ""
-        self.__class_map = {}
-        for i in range(len(class_name)):
-            self.__class_map[str(i)] = class_name[i]
+        self.__class_map = {"0": class_name[0]}
 
     def appned(self, fileName, data, height, width):
         date = "0000-00-00T00:00:00.000000"
@@ -302,7 +262,6 @@ class Manifest:
         return self.__lines
 
 
-# 1画像分のデータを保持するクラス
 class Data:
     def __init__(self, rate):
         self.__rects = []
@@ -319,7 +278,6 @@ class Data:
     def get(self, i):
         return (self.__images[i], self.__rects[i], self.__class_ids[i])
 
-    # 追加（重複率が指定値以上の場合は失敗する）
     def append(self, target_image, rect, class_id):
         conflict = False
         for i in range(len(self.__rects)):
@@ -334,7 +292,6 @@ class Data:
             return True
         return False
 
-    # 重複率
     def __multiplicity(self, a, b):
         (ax_mn, ay_mn) = a[0]
         (ax_mx, ay_mx) = a[1]
@@ -352,7 +309,6 @@ class Data:
         return intersect / (a_area + b_area - intersect)
 
 
-# 各クラスのデータ数が同一になるようにカウントする
 class Counter:
     def __init__(self, max):
         self.__counter = np.zeros(max)
@@ -369,7 +325,6 @@ class Counter:
 
 
 def main():
-    # 出力先の初期化
     if os.path.exists(OUTPUT_PATH):
         shutil.rmtree(OUTPUT_PATH)
     os.mkdir(OUTPUT_PATH)
@@ -377,91 +332,51 @@ def main():
     print("出力先初期化完了")
 
     target = Target(TARGET_IMAGE_PATH, BASE_WIDTH, CLASS_NAME)
-
-    print("Target Done")
-
     background = Background(BACKGROUND_IMAGE_PATH)
-
-    print("Background Done")
-
     transformer = Transformer(BACK_WIDTH, BACK_HEIGHT)
-
-    print("Transformer DOne")
     manifest = Manifest(CLASS_NAME)
-
-    print("manifest Done")
-
     counter = Counter(len(CLASS_NAME))
-
-    print("Counter DOne")
-
     effecter = Effecter()
-
-    print("effecter Done")
 
     no = 0
 
     while True:
-        # 背景画像の取得
         background_image = background.get()
 
-        # 商品データ
-
-        # 重なり率（これを超える場合は、配置されない）
-        # rate = 0.1
-        rate = 0  # ナンバープレートの重なりは、対象画となるため、重なりを排除する
+        rate = 0
         data = Data(rate)
-        # for _ in range(20):
+
         for _ in range(10):
-            # 現時点で作成数の少ないクラスIDを取得
-            class_id = counter.get()
-            # 商品画像の取得
-            target_image = target.get(class_id)
-            # 変換
+            target_image, class_id = target.get()
             (transform_image, rect) = transformer.warp(target_image)
             frame = marge_image(background_image, transform_image)
-            # 商品の追加（重複した場合は、失敗する）
             ret = data.append(transform_image, rect, class_id)
             if ret:
                 counter.inc(class_id)
 
-        print("max:{}".format(data.max()))
         frame = background_image
         for index in range(data.max()):
             (target_image, _, _) = data.get(index)
-            # 合成
             frame = marge_image(frame, target_image)
 
-        # アルファチャンネル削除
         frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
-
-        # エフェクト
         frame = effecter.gauss(frame, random.randint(0, 2))
         frame = effecter.noise(frame)
 
-        # 画像名
         fileName = "{:05d}.png".format(no)
         no += 1
 
-        # 画像保存前にグレースケールに変換
         gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         gray_frame_rgb = cv2.cvtColor(gray_frame, cv2.COLOR_GRAY2RGB)
 
-        # 画像保存
         cv2.imwrite("{}/{}".format(OUTPUT_PATH, fileName), gray_frame_rgb)
 
-        # manifest追加
         manifest.appned(
             fileName, data, gray_frame_rgb.shape[0], gray_frame_rgb.shape[1]
         )
-        # # 画像保存
-        # cv2.imwrite("{}/{}".format(OUTPUT_PATH, fileName), frame)
-        # # manifest追加
-        # manifest.appned(fileName, data, frame.shape[0], frame.shape[1])
 
         for i in range(data.max()):
             (_, rect, class_id) = data.get(i)
-            # バウンディングボックス描画（確認用）
             frame = box(frame, rect, class_id)
 
         counter.print()
@@ -469,11 +384,6 @@ def main():
         if MAX <= no:
             break
 
-        # 表示（確認用）
-        # cv2.imshow("frame", frame)
-        # cv2.waitKey(1)
-
-    # manifest 保存
     with open("{}/{}".format(OUTPUT_PATH, manifestFile), "w") as f:
         f.write(manifest.get())
 

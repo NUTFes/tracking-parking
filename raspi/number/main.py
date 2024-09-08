@@ -20,6 +20,7 @@ model = YOLO(PATH)
 cap = cv2.VideoCapture(camera_path)
 # cap = cv2.VideoCapture(video_path)
 
+
 # fps値設定
 cap.set(cv2.CAP_PROP_FPS, 60)
 
@@ -177,12 +178,13 @@ while cap.isOpened():
     # out.write(annotated_frame)
     
     # フレームを表示
-    cv2.imshow('Frame', annotated_frame)
+    # cv2.imshow('Frame', annotated_frame)
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
 
 # ocrの結果
 print(ocr_results)
+
 
 # リソースの解放
 cap.release()
