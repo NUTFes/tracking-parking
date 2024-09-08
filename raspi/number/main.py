@@ -8,11 +8,11 @@ from ultralytics import YOLO
 load_dotenv()
 
 # パスの設定
-HOME_DIR = os.environ["HOME"]
-PATH = HOME_DIR + "/yolo_fine_tuning/runs/detect/train14/weights/best.pt"
+HOME_DIR = os.environ["HOME_DIR"]
+PATH = HOME_DIR + "/yolo_fine_tuning/runs/detect/l_640_FHD/weights/best.pt"
 
 # YOLOモデルのロード
-model = YOLO(PATH)
+model = YOLO(PATH, verbose=False)
 
 # カメラデバイスを開く
 cap = cv2.VideoCapture(0)
@@ -25,26 +25,33 @@ out = cv2.VideoWriter(output_path, fourcc, 30.0, (int(cap.get(3)), int(cap.get(4
 while cap.isOpened():
     # リアルタイム画像からフレームを読み込む
     ret, frame = cap.read()
+    
 
     # フレームが確認できる：true
     if ret:
         # フレームごとに物体検知を行う
-        results = model.track(frame)
+        gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        gray_frame_rgb = cv2.cvtColor(gray_frame, cv2.COLOR_GRAY2RGB)
 
+        results = model.track(gray_frame_rgb, device='cuda')
+        # results = model.track(frame, imgsz=(1920, 1080), device='cuda')
+
+        
         # 検知結果を描画
         annotated_frame = results[0].plot()
 
+        # show
+        cv2.imshow("Frame",annotated_frame) 
+
         # 出力動画にフレームを書き込む
         out.write(annotated_frame)
-
-        # フレームを表示
-        cv2.imshow("Frame", annotated_frame)
 
         # 'q'キーが押されたら終了
         if cv2.waitKey(1) & 0xFF == ord("q"):
             break
     else:
         break
+
 
 # リソースの解放
 cap.release()

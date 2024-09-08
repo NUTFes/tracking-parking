@@ -9,3 +9,4 @@ __pycache__/
 /sahi
 .env
 raspi/result/prediction_visual.png
+*.pt
