@@ -9,7 +9,7 @@ load_dotenv()
 
 # パスの設定
 HOME_DIR = os.environ["HOME_DIR"]
-PATH = HOME_DIR + "/yolo_fine_tuning/runs/detect/m_640_FHD/weights/best.pt"
+PATH = HOME_DIR + "/yolo_fine_tuning/runs/detect/l_640_FHD/weights/best.pt"
 
 # YOLOモデルのロード
 model = YOLO(PATH, verbose=False)
@@ -30,7 +30,10 @@ while cap.isOpened():
     # フレームが確認できる：true
     if ret:
         # フレームごとに物体検知を行う
-        results = model.track(frame, device='cuda')
+        gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        gray_frame_rgb = cv2.cvtColor(gray_frame, cv2.COLOR_GRAY2RGB)
+
+        results = model.track(gray_frame_rgb, device='cuda')
         # results = model.track(frame, imgsz=(1920, 1080), device='cuda')
 
         
