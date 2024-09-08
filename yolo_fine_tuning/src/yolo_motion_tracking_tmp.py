@@ -30,6 +30,7 @@ cap.set(cv2.CAP_PROP_FPS, 60)
 
 # その他の初期化
 id_list = []
+result_text = []
 reader = easyocr.Reader(["ja", "en"])
 first_time = True
 found_similar = False
@@ -48,7 +49,7 @@ while cap.isOpened():
         denoised_frame = cv2.medianBlur(frame, 1)
         
         # グレースケール化
-        g_frame = cv2.cvtColor(denoised_frame, cv2.COLOR_BGR2GRAY)
+        # g_frame = cv2.cvtColor(denoised_frame, cv2.COLOR_BGR2GRAY)
         
         # エッジ検出 (Canny)
         # edges_frame = cv2.Canny(g_frame, 200, 400)
@@ -63,8 +64,8 @@ while cap.isOpened():
         
         # 前処理後フレーム変数
         # results_frame = resized_frame
-        ch_frame = cv2.cvtColor(g_frame, cv2.COLOR_GRAY2BGR)
-        results_frame = ch_frame
+        # ch_frame = cv2.cvtColor(g_frame, cv2.COLOR_GRAY2BGR)
+        results_frame = denoised_frame
     else:
         results_frame = frame
     
@@ -90,8 +91,8 @@ while cap.isOpened():
         
         # 物体検出後画像処理
         # ナンバープレート上部と下部で分割
-        t_cropped_frame = results_frame[y1:int(y1+(y2-y1)*division), x1:x2]
-        b_cropped_frame = results_frame[int(y1+(y2-y1)*division):y2, x1:x2]
+        # t_cropped_frame = results_frame[y1:int(y1+(y2-y1)*division), x1:x2]
+        # b_cropped_frame = results_frame[int(y1+(y2-y1)*division):y2, x1:x2]
         
         if not before_prosess:
             # グレースケール化
@@ -124,22 +125,25 @@ while cap.isOpened():
             t_result_frame = t_binary_cropped_frame
             b_result_frame = b_binary_cropped_frame
         else:
-            t_resized_frame = cv2.resize(t_cropped_frame, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
-            b_resized_frame = cv2.resize(b_cropped_frame, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+            # t_resized_frame = cv2.resize(t_cropped_frame, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+            # b_resized_frame = cv2.resize(b_cropped_frame, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
             
             # 前処理後フレーム変数
-            t_result_frame = t_resized_frame
-            b_result_frame = b_resized_frame
+            # t_result_frame = t_resized_frame
+            # b_result_frame = b_resized_frame
+            result_frame = results_frame[y1:y2, x1:x2]
         
         
         # 前処理後の状態をフレームに表示
-        cv2.imshow('Processed Top Frame', t_result_frame)
-        cv2.imshow('Processed Bottom Frame', b_result_frame)
+        # cv2.imshow('Processed Top Frame', t_result_frame)
+        # cv2.imshow('Processed Bottom Frame', b_result_frame)
+        cv2.imshow('Processed Frame', result_frame)
         
-        t_result_text = reader.readtext(t_result_frame, detail=0)
-        b_result_text = reader.readtext(b_result_frame, detail=0)
-        result_list = t_result_text + b_result_text
-        result_text = " ".join(result_list)
+        # t_result_text = reader.readtext(t_result_frame, detail=0)
+        # b_result_text = reader.readtext(b_result_frame, detail=0)
+        result_text = reader.readtext(result_frame, detail=0)
+        # result_list = t_result_text + b_result_text
+        # result_text = " ".join(result_list)
         print("OCR:", result_text)
         
         # OCR結果からすでに駐車場に入った車かどうかを判定
@@ -166,6 +170,7 @@ while cap.isOpened():
         id_list.extend(new_ids)
     
     print("id:", id_list)
+    print("OCR:", result_text)
     print("parked", len(ocr_results))
 
     # 出力動画にフレームを書き込む
