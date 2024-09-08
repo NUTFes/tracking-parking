@@ -5,3 +5,5 @@ yolo_fine_tuning/runs/detect/m_640_FHD/weights/last.pt filter=lfs diff=lfs merge
 yolo_fine_tuning/runs/detect/m_640_FHD/weights/best.pt filter=lfs diff=lfs merge=lfs -text
 yolo_fine_tuning/runs/detect/m_FHD_rect/weights/last.pt filter=lfs diff=lfs merge=lfs -text
 yolo_fine_tuning/runs/detect/m_FHD_rect/weights/best.pt filter=lfs diff=lfs merge=lfs -text
+yolo_fine_tuning/runs/detect/l_640_FHD/weights/last.pt filter=lfs diff=lfs merge=lfs -text
+yolo_fine_tuning/runs/detect/l_640_FHD/weights/best.pt filter=lfs diff=lfs merge=lfs -text
