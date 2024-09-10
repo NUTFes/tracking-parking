@@ -3,7 +3,7 @@
 import cv2
 from sahi import AutoDetectionModel
 from sahi.utils.yolov8 import download_yolov8s_model
-from send import send_mongo,connect_mongo
+from dbcontrol import send_mongo,connect_mongo
 from detect import detect
 import os
 from dotenv import load_dotenv

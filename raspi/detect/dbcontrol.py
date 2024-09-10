@@ -28,6 +28,12 @@ def send_mongo(num,mongo_col):
     #mongo_cl.close()
     return
 
+def get_mongo(mongo_col):
+    print("get mongo")
+    parked_table = mongo_col.find()
+    print("get finish")
+    #mongo_cl.close()
+    return parked_table[-1]
 # print(get_time())
 
 if __name__ == "__main__": 
