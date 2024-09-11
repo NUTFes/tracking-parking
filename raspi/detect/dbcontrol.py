@@ -30,13 +30,13 @@ def send_mongo(num,mongo_col):
 
 def get_mongo(mongo_col):
     print("get mongo")
-    parked_table = mongo_col.find()
+    parked_table = list(mongo_col.find())
     print("get finish")
     #mongo_cl.close()
     return parked_table[-1]
 # print(get_time())
 
-if __name__ == "__main__": 
+if __name__ == "__main__":
     load_dotenv()
     USER = os.environ["USER_NAME"]
     PASS = os.environ["PASS"]
@@ -47,4 +47,3 @@ if __name__ == "__main__":
     collection,client = connect_mongo(USER,PASS,HOST,PORT,DB_NAME,COLLECTION_NAME)
     send_mongo("20")
     print(collection)
-
