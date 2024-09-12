@@ -202,9 +202,9 @@ def main():
             id_list.extend(new_ids)
             id_time_list.append(current_time)
         
-        while id_time_list and (current_time - id_time_list[0]) > expiration_time:
-            id_list.pop(0)
-            id_time_list.pop(0)
+        # while id_time_list and (current_time - id_time_list[0]) > expiration_time:
+        #     id_list.pop(0)
+        #     id_time_list.pop(0)
         
         parked_str = str(len(ocr_results)-1)
         # print("id:", id_list)
