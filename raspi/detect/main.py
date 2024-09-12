@@ -144,8 +144,8 @@ def main():
                 b_result_frame = b_resized_cropped_frame
                 
                 # 前処理後の状態をフレームに表示
-                cv2.imshow('Processed Top Frame', t_result_frame)
-                cv2.imshow('Processed Bottom Frame', b_result_frame)
+                # cv2.imshow('Processed Top Frame', t_result_frame)
+                # cv2.imshow('Processed Bottom Frame', b_result_frame)
                 
                 t_result_text = reader.readtext(t_result_frame, detail=0)
                 b_result_text = reader.readtext(b_result_frame, detail=0)
@@ -162,7 +162,7 @@ def main():
                 result_frame = resized_cropped_frame
                 
                 # 前処理後の状態をフレームに表示
-                cv2.imshow('Processed Frame', result_frame)
+                # cv2.imshow('Processed Frame', result_frame)
                 
                 result_text = reader.readtext(result_frame, detail=0)
                 
