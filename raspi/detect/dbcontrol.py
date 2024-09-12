@@ -14,15 +14,15 @@ def get_time():
     ut = time.time() * 1000
     return ut
 
-def make_doc(num,time):
+def make_doc(num):
     num_int = f"{num}"
-    document = {"count": int(num_int), "time": time }
+    document = {"COLUMN_NAME": int(num_int)}
     return document
 
 def send_mongo(num,mongo_col):
     print("send mongo")
-    ut = get_time()
-    doc = make_doc(num,ut)
+    # ut = get_time()
+    doc = make_doc(num)
     mongo_col.insert_one(doc)
     print("send finish")
     #mongo_cl.close()
