@@ -213,7 +213,7 @@ def main():
         send_mongo("1234",collection)
         
         # フレームを表示
-        cv2.imshow('Frame', annotated_frame)
+        # cv2.imshow('Frame', annotated_frame)
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
