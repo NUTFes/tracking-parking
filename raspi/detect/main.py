@@ -28,20 +28,7 @@ camera_path = 0
 # 人なら0、車なら2
 count_class = 0
 
-# その他の初期化
-id_list = []
-id_time_list = []
-reader = easyocr.Reader(["ja", "en"])
-first_time = True
-found_similar = False
-before_process = True
-small_image_flag = False
-detection_failure = False
-ocr_results = []
-division = 5/12
-expiration_time = 60 # 60秒でid_listの要素を頭から削除
-ignore_number_plate_txt = "日本 111 し 42-49"
-ocr_results.append(ignore_number_plate_txt)
+
 
 def main():
     # # モデルをダウンロード
@@ -67,6 +54,21 @@ def main():
 
     # fps値設定
     cap.set(cv2.CAP_PROP_FPS, 60)
+    
+    # その他の初期化
+    id_list = []
+    id_time_list = []
+    reader = easyocr.Reader(["ja", "en"])
+    first_time = True
+    found_similar = False
+    before_process = True
+    small_image_flag = False
+    detection_failure = False
+    ocr_results = []
+    division = 5/12
+    expiration_time = 60 # 60秒でid_listの要素を頭から削除
+    ignore_number_plate_txt = "日本 111 し 42-49"
+    ocr_results.append(ignore_number_plate_txt)
 
     while True:
         ret, frame = cap.read()
@@ -98,8 +100,8 @@ def main():
         annotated_frame = results[0].plot()
         detected_ids = list(map(int, results[0].boxes.id)) if results[0].boxes.id is not None else []
 
-        # if first_time and results[0].boxes.xyxy.tolist():
-        #     first_time = False
+        if first_time and results[0].boxes.xyxy.tolist():
+            first_time = False
 
         # 新しいIDの検出とOCR実行
         new_ids = [i for i in detected_ids if i not in id_list and results[0].boxes.xyxy.tolist()]
