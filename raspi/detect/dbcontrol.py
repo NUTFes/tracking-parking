@@ -16,7 +16,7 @@ def get_time():
 
 def make_doc(num):
     num_int = f"{num}"
-    document = {"COLUMN_NAME": int(num_int)}
+    document = {"parking_count": int(num_int)}
     return document
 
 def send_mongo(num,mongo_col):
