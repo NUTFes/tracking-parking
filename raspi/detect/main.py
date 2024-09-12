@@ -22,7 +22,7 @@ COLLECTION_NAME = os.environ["COLLECTION_NAME"]
 COLUMN_NAME = os.environ["COLUMN_NAME"]
 
 HOME_DIR = os.environ["HOME_DIR"]
-PATH = os.path.join(HOME_DIR, "yolo_fine_tuning/runs/detect/train14/weights/best.pt")
+PATH = os.path.join(HOME_DIR, "yolo_fine_tuning/runs/detect/train14/weights/l_color.pt")
 camera_path = 0
 
 # 人なら0、車なら2
@@ -84,11 +84,11 @@ def main():
             denoised_frame = cv2.medianBlur(frame, 1)
             
             # グレースケール化
-            g_frame = cv2.cvtColor(denoised_frame, cv2.COLOR_BGR2GRAY)
+            # g_frame = cv2.cvtColor(denoised_frame, cv2.COLOR_BGR2GRAY)
             
             # 前処理後フレーム変数
-            ch_frame = cv2.cvtColor(g_frame, cv2.COLOR_GRAY2BGR)
-            results_frame = ch_frame
+            # ch_frame = cv2.cvtColor(g_frame, cv2.COLOR_GRAY2BGR)
+            results_frame = denoised_frame
             
         else:
             results_frame = frame
@@ -175,14 +175,15 @@ def main():
             
             # OCR結果からすでに駐車場に入った車かどうかを判定
             found_similar = False
-            count = 1
+            count = 0
             # print("len of ocr_results:", len(ocr_results))
             # print("len of id_list:", len(id_list))
             for parked in ocr_results:
                 similarity = Levenshtein.ratio(result_text, parked)
                 # print("類似度比較：", similarity)
                 if similarity >= 0.8:
-                    found_similar = True
+                    if count != 0:
+                       found_similar = True
                     break
                 elif similarity == 0.0:
                     detection_failure = True
@@ -213,7 +214,7 @@ def main():
         send_mongo(parked_str,collection)
         
         # フレームを表示
-        # cv2.imshow('Frame', annotated_frame)
+        cv2.imshow('Frame', annotated_frame)
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
