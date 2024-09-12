@@ -26,10 +26,11 @@ COLUMN_NAME = os.environ["COLUMN_NAME"]
 
 
 from sakuraio.hardware.rpi import SakuraIOSMBus
-collection,_ = connect_mongo(USER,PASS,HOST,PORT,DB_NAME,COLLECTION_NAME)
+collection,_ = connect_mongo(USER,PASS,HOST,PORT,DB_NAME,COLLECTION_NAME,COLUMN_NAME)
 
+channel = 1
 sakuraio = SakuraIOSMBus()
 parked_num = get_mongo(collection)
 field_value = parked_num.get(COLUMN_NAME)
-sakuraio.enqueue_tx(0, int(field_value))
+sakuraio.enqueue_tx(channel, int(field_value))
 sakuraio.send()

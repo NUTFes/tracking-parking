@@ -19,9 +19,10 @@ HOST = os.environ["HOST"]
 PORT = os.environ["PORT"]
 DB_NAME = os.environ["DB_NAME"]
 COLLECTION_NAME = os.environ["COLLECTION_NAME"]
+COLUMN_NAME = os.environ["COLUMN_NAME"]
 
 # mongoDBと接続
-collection,_ = connect_mongo(USER,PASS,HOST,PORT,DB_NAME,COLLECTION_NAME)
+collection,_ = connect_mongo(USER,PASS,HOST,PORT,DB_NAME,COLLECTION_NAME,COLUMN_NAME)
 
 
 # Yoloモデルのロードとビデオキャプチャのセットアップ

@@ -4,7 +4,7 @@ import time
 import os
 from dotenv import load_dotenv
 
-def connect_mongo(user,password,host,port,db_name,collection_name):
+def connect_mongo(user,password,host,port,db_name,collection_name,column_name):
     client = MongoClient(f"mongodb://{user}:{password}@{host}:{port}")
     db = client[db_name]
     collection = db[collection_name]
@@ -44,6 +44,7 @@ if __name__ == "__main__":
     PORT = os.environ["PORT"]
     DB_NAME = os.environ["DB_NAME"]
     COLLECTION_NAME = os.environ["COLLECTION_NAME"]
-    collection,client = connect_mongo(USER,PASS,HOST,PORT,DB_NAME,COLLECTION_NAME)
+    COLUMN_NAME = os.environ["COLUMN_NAME"]
+    collection,client = connect_mongo(USER,PASS,HOST,PORT,DB_NAME,COLLECTION_NAME,COLUMN_NAME)
     send_mongo("20")
     print(collection)

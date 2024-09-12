@@ -15,6 +15,7 @@ HOST = os.environ["HOST"]
 PORT = os.environ["PORT"]
 DB_NAME = os.environ["DB_NAME"]
 COLLECTION_NAME = os.environ["COLLECTION_NAME"]
+COLUMN_NAME = os.environ["COLUMN_NAME"]
 
 # 人なら0、車なら2
 count_class = 0
@@ -25,7 +26,7 @@ def main():
     download_yolov8s_model(yolov8_model_path)
 
     # mongoDBと接続
-    collection,_ = connect_mongo(USER,PASS,HOST,PORT,DB_NAME,COLLECTION_NAME)
+    collection,_ = connect_mongo(USER,PASS,HOST,PORT,DB_NAME,COLLECTION_NAME,COLUMN_NAME)
 
 
     # 画像パスまたはnumpy画像を用いて標準的な推論を行う。
