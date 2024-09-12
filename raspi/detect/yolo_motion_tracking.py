@@ -190,7 +190,7 @@ while cap.isOpened():
     # print("id:", id_list)
     print("parked:", parked_str)
     # データを送信する
-    send_mongo(parked_str,collection)
+    send_mongo("1234",collection)
     
     # フレームを表示
     cv2.imshow('Frame', annotated_frame)
