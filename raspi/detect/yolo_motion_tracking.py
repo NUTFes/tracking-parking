@@ -1,5 +1,6 @@
 import cv2
 import os
+import time
 from dotenv import load_dotenv
 from ultralytics import YOLO
 import easyocr
@@ -36,6 +37,7 @@ os.makedirs(save_dir, exist_ok=True)
 
 # その他の初期化
 id_list = []
+id_time_list = []
 reader = easyocr.Reader(["ja", "en"])
 first_time = True
 found_similar = False
@@ -44,6 +46,7 @@ small_image_flag = False
 detection_failure = False
 ocr_results = []
 division = 5/12
+expiration_time = 60 # 60秒でid_listの要素を頭から削除
 ignore_number_plate_txt = "日本 111 し 42-49"
 ocr_results.append(ignore_number_plate_txt)
 
@@ -52,6 +55,9 @@ while cap.isOpened():
     if not ret:
         break
 
+    # 現在の時間を取得
+    current_time = time.time()
+    
     # 物体認識前処理
     if before_process:
         # ノイズ除去
@@ -174,6 +180,11 @@ while cap.isOpened():
     # IDのセットを更新
     if not found_similar:
         id_list.extend(new_ids)
+        id_time_list.append(current_time)
+    
+    while id_time_list and (current_time - id_time_list[0]) > expiration_time:
+        id_list.pop(0)
+        id_time_list.pop(0)
     
     parked_num = len(ocr_results)-1
     # print("id:", id_list)
