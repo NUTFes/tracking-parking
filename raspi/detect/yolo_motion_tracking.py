@@ -186,11 +186,11 @@ while cap.isOpened():
         id_list.pop(0)
         id_time_list.pop(0)
     
-    parked_num = len(ocr_results)-1
+    parked_str = str(len(ocr_results)-1)
     # print("id:", id_list)
-    # print("parked:", parked_num)
+    print("parked:", parked_str)
     # データを送信する
-    send_mongo(parked_num,collection)
+    send_mongo(parked_str,collection)
     
     # フレームを表示
     cv2.imshow('Frame', annotated_frame)
