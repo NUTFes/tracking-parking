@@ -98,8 +98,8 @@ def main():
         annotated_frame = results[0].plot()
         detected_ids = list(map(int, results[0].boxes.id)) if results[0].boxes.id is not None else []
 
-        if first_time and results[0].boxes.xyxy.tolist():
-            first_time = False
+        # if first_time and results[0].boxes.xyxy.tolist():
+        #     first_time = False
 
         # 新しいIDの検出とOCR実行
         new_ids = [i for i in detected_ids if i not in id_list and results[0].boxes.xyxy.tolist()]
