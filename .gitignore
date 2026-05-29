@@ -10,3 +10,4 @@ __pycache__/
 .env
 raspi/result/prediction_visual.png
 *.pt
+venv/
