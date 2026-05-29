@@ -4,9 +4,10 @@ trapa/
 __pycache__/
 *.env
 *.yaml
-.DS_store
+.DS_Store
 !dataset.yaml
 /sahi
 .env
 raspi/result/prediction_visual.png
 *.pt
+.venv/
