@@ -11,6 +11,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parents[1]))
 
 import cv2
+import itertools
 import pandas as pd
 from ultralytics import YOLO
 
@@ -20,13 +21,10 @@ from src.progress import calc_s
 
 # ── パラメータ ──────────────────────────────────────────────────────────────
 GT_DIR   = "data/inputs/configs"   # 動画設定JSONのディレクトリ
-EXP_NAME = "exp_mae"
+EXP_NAME = "exp1_mae"
 
-PARAM_LIST = [
-    (0.20, 0.80),
-    (0.25, 0.75),
-    (0.30, 0.70),
-]
+S_LOW_LIST  = [0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40]
+S_HIGH_LIST = [0.60, 0.65]
 VEHICLE_CLASSES = [2, 7]  # COCO: 2=car, 7=truck
 # ────────────────────────────────────────────────────────────────────────────
 
@@ -92,13 +90,14 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     configs = load_configs(GT_DIR)
-    print(f"動画数: {len(configs)}  パラメータ組み合わせ: {len(PARAM_LIST)}")
+    param_list = list(itertools.product(S_LOW_LIST, S_HIGH_LIST))
+    print(f"動画数: {len(configs)}  パラメータ組み合わせ: {len(param_list)}")
 
     model = YOLO("yolov8s.pt")
     detail_rows = []
     summary_rows = []
 
-    for s_low, s_high in PARAM_LIST:
+    for s_low, s_high in param_list:
         errors = []
         elapsed_list = []
 
