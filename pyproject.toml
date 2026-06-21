@@ -4,4 +4,17 @@ version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "lapx>=0.9.4",
+    "matplotlib>=3.11.0",
+    "numpy>=2.4.6",
+    "opencv-python>=4.13.0.92",
+    "pandas>=3.0.3",
+    "seaborn>=0.13.2",
+    "ultralytics>=8.4.72",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
