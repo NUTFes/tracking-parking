@@ -11,3 +11,14 @@ __pycache__/
 raspi/result/prediction_visual.png
 *.pt
 .venv/
+
+# data directory
+data/
+data/*
+
+# files and directories for AI agents
+CLAUDE.md
+docs/
+docs/*
+.claude/
+.claude/*
