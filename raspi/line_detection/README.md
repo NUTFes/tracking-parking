@@ -44,10 +44,22 @@ raspi/line_detection/
 
 ### 1. 依存パッケージのインストール
 
+プロジェクトルートディレクトリ(`tracking-parking/`)でuvを使ってインストールします:
+
 ```bash
-cd /path/to/tracking-parking/raspi/line_detection
-pip install -r requirements.txt
+cd /path/to/tracking-parking
+uv sync
 ```
+
+これにより、`pyproject.toml`に定義された2ライン検知システムに必要な依存パッケージがすべてインストールされます。
+
+**インストールされるパッケージ:**
+- ultralytics (YOLOv8)
+- opencv-python (動画処理)
+- python-dotenv (設定管理)
+- numpy (数値演算)
+- torch, torchvision (深層学習)
+- pandas (データ処理)
 
 ### 2. ライン座標の設定
 
