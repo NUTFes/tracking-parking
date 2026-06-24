@@ -13,8 +13,4 @@ raspi/result/prediction_visual.png
 .venv/
 
 # 2ライン検知システムの出力ファイル
-raspi/line_detection/data/inputs/*.mp4
-raspi/line_detection/data/inputs/*.avi
-raspi/line_detection/data/outputs/videos/*.mp4
-raspi/line_detection/data/outputs/logs/*.json
-raspi/line_detection/data/outputs/logs/*.csv
+raspi/line_detection/data/*
