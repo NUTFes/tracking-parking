@@ -113,11 +113,12 @@ def process_video(video_path: str, config: Config, output_dir: str):
         if not ret:
             break
 
-        # 2.1 YOLO検知+トラッキング
+        # 2.1 YOLO検知+トラッキング（車両クラスのみ）
         results = model.track(
             frame,
             persist=True,
             conf=config.confidence_threshold,
+            classes=config.vehicle_classes,
             verbose=False
         )
 

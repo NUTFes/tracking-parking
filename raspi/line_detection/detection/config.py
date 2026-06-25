@@ -31,6 +31,7 @@ class Config:
     # YOLOモデル設定
     model_path: str
     confidence_threshold: float
+    vehicle_classes: list  # 検出する車両クラスIDのリスト
 
     # ライン設定
     line1: Line  # 入口側ライン(主判定)
@@ -79,6 +80,10 @@ class Config:
 
         confidence_threshold = float(os.getenv("CONFIDENCE_THRESHOLD", "0.3"))
 
+        # 車両クラス設定
+        vehicle_classes_str = os.getenv("VEHICLE_CLASSES", "2,3,5,7")
+        vehicle_classes = [int(x.strip()) for x in vehicle_classes_str.split(",")]
+
         # Line1設定(入口側)
         line1 = Line(
             start=(
@@ -126,6 +131,7 @@ class Config:
             home_dir=home_dir,
             model_path=model_path,
             confidence_threshold=confidence_threshold,
+            vehicle_classes=vehicle_classes,
             line1=line1,
             line2=line2,
             parking_ref_point=parking_ref_point,
