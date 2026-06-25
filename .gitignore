@@ -14,3 +14,4 @@ raspi/result/prediction_visual.png
 
 # 2ライン検知システムの出力ファイル
 raspi/line_detection/data/*
+data/*
