@@ -18,4 +18,5 @@ dependencies = [
     "torchvision>=0.17.2",
     # データ処理
     "pandas>=2.2.1",
+    "lap>=0.5.13",
 ]
