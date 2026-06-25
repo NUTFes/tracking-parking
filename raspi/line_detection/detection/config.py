@@ -42,6 +42,7 @@ class Config:
     margin: float  # ライン交差判定のマージン
     max_frame_gap: int  # Line1とLine2の最大フレーム差
     cleanup_threshold: int  # 古い追跡をクリーンアップするフレーム数
+    iou_threshold: float  # トラッキングのIOU閾値
 
     # 処理方式
     method: str  # "hybrid" 固定
@@ -118,6 +119,7 @@ class Config:
         margin = float(os.getenv("MARGIN", "1000.0"))
         max_frame_gap = int(os.getenv("MAX_FRAME_GAP", "90"))
         cleanup_threshold = int(os.getenv("CLEANUP_THRESHOLD", "150"))
+        iou_threshold = float(os.getenv("IOU_THRESHOLD", "0.3"))
 
         # 処理方式
         method = os.getenv("METHOD", "hybrid")
@@ -138,6 +140,7 @@ class Config:
             margin=margin,
             max_frame_gap=max_frame_gap,
             cleanup_threshold=cleanup_threshold,
+            iou_threshold=iou_threshold,
             method=method,
             save_video=save_video,
             save_logs=save_logs,

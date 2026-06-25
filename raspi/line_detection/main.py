@@ -118,6 +118,7 @@ def process_video(video_path: str, config: Config, output_dir: str):
             frame,
             persist=True,
             conf=config.confidence_threshold,
+            iou=config.iou_threshold,
             classes=config.vehicle_classes,
             verbose=False
         )
@@ -143,7 +144,7 @@ def process_video(video_path: str, config: Config, output_dir: str):
                     )
 
                     # Line2交差検知
-                    line2_crossed = detector.detect_line2_crossing(
+                    line2_dir = detector.detect_line2_crossing(
                         state.prev_point,
                         state.curr_point
                     )
@@ -153,8 +154,8 @@ def process_video(video_path: str, config: Config, output_dir: str):
                         state.record_line1_crossing(line1_dir, frame_id)
 
                     # Line2交差を記録
-                    if line2_crossed:
-                        state.record_line2_crossing(frame_id)
+                    if line2_dir:
+                        state.record_line2_crossing(line2_dir, frame_id)
 
                     # ハイブリッド方式でイベント判定
                     if tracker.should_count_event(state):
@@ -168,7 +169,7 @@ def process_video(video_path: str, config: Config, output_dir: str):
                             frame_id=frame_id,
                             fps=fps,
                             confidence=state.confidence,
-                            line2_crossed=state.line2_passed
+                            line2_crossed=(state.line2_direction is not None)
                         )
 
                         print(f"[Frame {frame_id}] ID:{track_id} {event_type} (信頼度: {state.confidence})")

@@ -22,7 +22,7 @@ class VehicleState:
     line1_timestamp: Optional[float] = None
 
     # Line2状態(補助ライン)
-    line2_passed: bool = False
+    line2_direction: Optional[str] = None  # "IN" or "OUT"
     line2_frame: Optional[int] = None
     line2_timestamp: Optional[float] = None
 
@@ -59,14 +59,15 @@ class VehicleState:
         self.line1_timestamp = time.time()
         self.passed_order.append("line1")
 
-    def record_line2_crossing(self, frame_id: int):
+    def record_line2_crossing(self, direction: str, frame_id: int):
         """
         Line2交差を記録
 
         Args:
+            direction: "IN" or "OUT"
             frame_id: フレーム番号
         """
-        self.line2_passed = True
+        self.line2_direction = direction
         self.line2_frame = frame_id
         self.line2_timestamp = time.time()
         self.passed_order.append("line2")
@@ -86,7 +87,11 @@ class VehicleState:
             return None
 
         # Line2を交差していない場合はnormal
-        if not self.line2_passed:
+        if not self.line2_direction:
+            return "normal"
+
+        # Line1とLine2の方向が一致しているかチェック
+        if self.line1_direction != self.line2_direction:
             return "normal"
 
         # フレーム差をチェック

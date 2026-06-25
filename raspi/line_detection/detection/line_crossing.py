@@ -102,7 +102,7 @@ class LineCrossingDetector:
 
     def detect_line2_crossing(self,
                               prev_point: Tuple[float, float],
-                              curr_point: Tuple[float, float]) -> bool:
+                              curr_point: Tuple[float, float]) -> Optional[str]:
         """
         Line2(駐車場側)の交差を検知
 
@@ -111,15 +111,17 @@ class LineCrossingDetector:
             curr_point: 現フレームの車両位置
 
         Returns:
-            bool: 交差した場合True、そうでない場合False
+            Optional[str]:
+                "IN": 入庫方向に交差
+                "OUT": 出庫方向に交差
+                None: 交差なし
         """
-        result = self._detect_crossing(
+        return self._detect_crossing(
             prev_point,
             curr_point,
             self.line2,
             self.parking_side_line2
         )
-        return result is not None
 
     def _detect_crossing(self,
                         prev_point: Tuple[float, float],
