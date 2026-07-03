@@ -47,6 +47,10 @@ def load_gt(video_source: str, gt_path_str: str) -> dict:
 
 def run_once(model: YOLO, video_source: str, roi_points, y_min: float, y_max: float,
              s_low: float, s_high: float) -> dict:
+    # TODO(wandb連携・§4.2): 同一 YOLO インスタンスを persist=True で使い回しているため，
+    #   前 run のトラック ID 状態が次 run に持ち越され run の独立性が崩れる．
+    #   04_multi_video_mae.py の reset_or_reload_model() と同様に run 冒頭で
+    #   トラッカー状態をリセットすること（本スクリプトへの適用は別途スコープ）．
     cap = cv2.VideoCapture(video_source)
     counter = Counter(s_low, s_high)
     frame_times = []
