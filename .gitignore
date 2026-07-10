@@ -18,3 +18,6 @@ data/*
 
 # ドキュメント
 docs/
+docs/*
+!raspi/line_detection/docs/
+!raspi/line_detection/docs/wandb_integration_spec_v2.md
