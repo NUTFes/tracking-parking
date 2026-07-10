@@ -9,6 +9,7 @@ Weights & Biases 連携の薄いラッパ（両検出ロジック共通）
 """
 
 import json
+import math
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 
@@ -48,6 +49,36 @@ def build_exp_key(logic_name: str, dataset: str, device_name: str, params: Dict[
         parts.append(f"{key}={value_str}")
     param_str = "_".join(parts)
     return f"{logic_name}__{dataset}__{param_str}__{device_name}"
+
+
+def validate_log_interval_sec(raw_value: Any, *, source: str = "LOG_INTERVAL_SEC") -> float:
+    """LOG_INTERVAL_SEC の生値（文字列 or 数値）をパース・検証する。
+
+    0・負数・NaN・inf・数値変換不能な文字列をすべて ValueError で明示的に拒否する。
+    """
+    try:
+        value = float(raw_value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{source} must be a positive finite number, got {raw_value!r}")
+    if math.isnan(value) or math.isinf(value) or value <= 0:
+        raise ValueError(f"{source} must be a positive finite number, got {raw_value!r}")
+    return value
+
+
+def next_log_boundary(next_log_sec: float, t_rel_sec: float, log_interval_sec: float) -> float:
+    """次の定期サンプリング境界を while ループなし（O(1)）で計算する。
+
+    t_rel_sec == next_log_sec の場合も「ログ済み」として1区間進める（旧 `<=` 意味論を維持）。
+    count_changed による早期ログでも、この関数は t_rel_sec のみから境界を計算するため、
+    定期的なサンプリング間隔がずれることはない。
+    """
+    steps = math.floor((t_rel_sec - next_log_sec) / log_interval_sec) + 1
+    return next_log_sec + steps * log_interval_sec
+
+
+def should_log_frame(t_rel_sec: float, next_log_sec: float, count_changed: bool) -> bool:
+    """このフレームで log_frame すべきか判定する（副作用なし）。"""
+    return t_rel_sec >= next_log_sec or count_changed
 
 
 class ExperimentLogger:
