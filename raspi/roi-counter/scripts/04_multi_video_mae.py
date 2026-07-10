@@ -41,9 +41,10 @@ USE_WANDB = os.getenv("USE_WANDB", "false").lower() == "true"
 WANDB_PROJECT = os.getenv("WANDB_PROJECT", "tracking-parking")
 EXP_DEVICE_NAME = os.getenv("EXP_DEVICE_NAME", platform.node())
 EXP_DEVICE_ACCELERATOR = os.getenv("EXP_DEVICE_ACCELERATOR", "cpu")
-# roi-counter は model.track で conf/iou を指定していないため既定値を明示記録する
+# model.track に実際に渡す値のみを記録する（記録専用の乖離した定数を持たない）
 YOLO_CONF = 0.25
 YOLO_IOU = 0.7
+YOLO_DEVICE = os.getenv("YOLO_DEVICE") or None  # 未指定は Ultralytics の自動選択に委ねる
 # ────────────────────────────────────────────────────────────────────────────
 
 
@@ -94,6 +95,33 @@ def reset_or_reload_model(model: YOLO) -> tuple[YOLO, bool]:
     return YOLO(MODEL_PATH), True
 
 
+def build_detail_row(s_low: float, s_high: float, video_name: str, res: dict,
+                      gt_in: int, gt_out: int, count_error: int, stats: dict,
+                      use_wandb: bool, wandb_run_id, exp_key: str) -> dict:
+    """results.csv の1行を組み立てる。
+
+    wandb_run_id / exp_key は use_wandb=True のときのみ追加する
+    （USE_WANDB=false で W&B 導入前と同じ列構成を維持するため）。
+    """
+    row = {
+        "s_low":          s_low,
+        "s_high":         s_high,
+        "video":          video_name,
+        "count_in":       res["count_in"],
+        "count_out":      res["count_out"],
+        "gt_in":          gt_in,
+        "gt_out":         gt_out,
+        "count_error":    count_error,
+        "mean_frame_ms":  stats["frame_ms_mean"],
+        "max_frame_ms":   stats["frame_ms_max"],
+        "elapsed_ms":     stats["total_ms"],
+    }
+    if use_wandb:
+        row["wandb_run_id"] = wandb_run_id
+        row["exp_key"] = exp_key
+    return row
+
+
 def run_once(model: YOLO, video_source: str, roi_points: list,
              s_low: float, s_high: float) -> dict:
     # run 冒頭でトラッカー状態をリセット（前 run のトラック ID を持ち越さない）
@@ -119,7 +147,10 @@ def run_once(model: YOLO, video_source: str, roi_points: list,
         if not ret:
             break
         t0 = time.perf_counter()
-        results = model.track(frame, persist=True, verbose=False, classes=VEHICLE_CLASSES)
+        results = model.track(
+            frame, persist=True, verbose=False, classes=VEHICLE_CLASSES,
+            conf=YOLO_CONF, iou=YOLO_IOU, device=YOLO_DEVICE,
+        )
         boxes = results[0].boxes
         if boxes.id is not None:
             for xyxy, tid in zip(boxes.xyxy.cpu().numpy(), boxes.id.cpu().numpy()):
@@ -193,6 +224,7 @@ def main() -> None:
                 "tracker_reset": res["tracker_reset"],
                 "yolo_conf": YOLO_CONF,
                 "yolo_iou": YOLO_IOU,
+                "yolo_device": YOLO_DEVICE,
                 "s_low": s_low,
                 "s_high": s_high,
             }
@@ -225,21 +257,10 @@ def main() -> None:
             finally:
                 logger.finish(exit_code=run_exit_code)
 
-            detail_rows.append({
-                "s_low":          s_low,
-                "s_high":         s_high,
-                "video":          Path(video).name,
-                "count_in":       res["count_in"],
-                "count_out":      res["count_out"],
-                "gt_in":          gt_in,
-                "gt_out":         gt_out,
-                "count_error":    count_error,
-                "mean_frame_ms":  stats["frame_ms_mean"],
-                "max_frame_ms":   stats["frame_ms_max"],
-                "elapsed_ms":     stats["total_ms"],
-                "wandb_run_id":   logger.run_id,
-                "exp_key":        config["exp_key"],
-            })
+            detail_rows.append(build_detail_row(
+                s_low, s_high, Path(video).name, res, gt_in, gt_out, count_error,
+                stats, USE_WANDB, logger.run_id, config["exp_key"],
+            ))
             print(f"IN={res['count_in']} OUT={res['count_out']} err={count_error}")
 
         mae = sum(errors) / len(errors)
