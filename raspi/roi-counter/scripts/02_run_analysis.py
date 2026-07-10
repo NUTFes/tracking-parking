@@ -17,7 +17,13 @@ from src.roi import get_roi_y_range, is_in_roi
 from src.progress import calc_s
 from src.visualizer import draw_band_lines, draw_bbox_with_info, draw_counts, draw_roi
 
-from common.wandb_logger import ExperimentLogger, build_exp_key
+from common.wandb_logger import (
+    ExperimentLogger,
+    build_exp_key,
+    next_log_boundary,
+    should_log_frame,
+    validate_log_interval_sec,
+)
 from common.frame_stats import compute_frame_stats
 
 # ── パラメータ ──────────────────────────────────────────────────────────────
@@ -41,10 +47,11 @@ WANDB_PROJECT = os.getenv("WANDB_PROJECT", "tracking-parking")
 EXP_DEVICE_NAME = os.getenv("EXP_DEVICE_NAME", platform.node())
 EXP_DEVICE_ACCELERATOR = os.getenv("EXP_DEVICE_ACCELERATOR", "cpu")
 # 台数推移は dataset 内の相対時間ベースでサンプリングする（既定 5 秒間隔）
-LOG_INTERVAL_SEC = float(os.getenv("LOG_INTERVAL_SEC", "5"))
-# roi-counter は model.track で conf/iou を指定していないため既定値を明示記録する
+LOG_INTERVAL_SEC = validate_log_interval_sec(os.getenv("LOG_INTERVAL_SEC", "5"))
+# model.track に実際に渡す値のみを記録する（記録専用の乖離した定数を持たない）
 YOLO_CONF = 0.25
 YOLO_IOU = 0.7
+YOLO_DEVICE = os.getenv("YOLO_DEVICE") or None  # 未指定は Ultralytics の自動選択に委ねる
 # ────────────────────────────────────────────────────────────────────────────
 
 WEBCAM_FPS = 30.0
@@ -95,6 +102,7 @@ def main() -> None:
         "log_interval_sec": LOG_INTERVAL_SEC,
         "yolo_conf": YOLO_CONF,
         "yolo_iou": YOLO_IOU,
+        "yolo_device": YOLO_DEVICE,
         "s_low": S_LOW,
         "s_high": S_HIGH,
     }
@@ -110,7 +118,7 @@ def main() -> None:
     )
     logger.init_accuracy_placeholders()
     # 台数推移の x 軸を相対経過秒にする
-    logger.define_metric("current_parked", step_metric="t_rel_sec")
+    logger.define_metric("net_flow", step_metric="t_rel_sec")
 
     frame_records = []
     frame_idx = 0
@@ -127,8 +135,12 @@ def main() -> None:
                 break
 
             t_start = time.perf_counter()
-            results = model.track(frame, persist=True, verbose=False, classes=VEHICLE_CLASSES)
+            results = model.track(
+                frame, persist=True, verbose=False, classes=VEHICLE_CLASSES,
+                conf=YOLO_CONF, iou=YOLO_IOU, device=YOLO_DEVICE,
+            )
             boxes = results[0].boxes
+            num_tracks = 0 if boxes.id is None else len(boxes.id)
 
             if boxes.id is not None:
                 for xyxy, tid in zip(boxes.xyxy.cpu().numpy(), boxes.id.cpu().numpy()):
@@ -150,20 +162,21 @@ def main() -> None:
             count_changed = (
                 counter.count_in != prev_count_in or counter.count_out != prev_count_out
             )
-            if t_rel_sec >= next_log_sec or count_changed:
+            if should_log_frame(t_rel_sec, next_log_sec, count_changed):
                 logger.log_frame(
                     step=frame_idx,
                     metrics={
                         "t_rel_sec": t_rel_sec,
-                        "current_parked": counter.count_in - counter.count_out,
+                        "net_flow": counter.count_in - counter.count_out,
                         "cumulative_in": counter.count_in,
                         "cumulative_out": counter.count_out,
                         "frame_ms": frame_ms,
+                        "num_tracks": num_tracks,
+                        "retained_states": len(counter.tracks),
                     },
                 )
                 # 次の定期サンプリング境界へ進める（変化ログで飛んでも間隔を維持）
-                while next_log_sec <= t_rel_sec:
-                    next_log_sec += LOG_INTERVAL_SEC
+                next_log_sec = next_log_boundary(next_log_sec, t_rel_sec, LOG_INTERVAL_SEC)
             prev_count_in = counter.count_in
             prev_count_out = counter.count_out
 
