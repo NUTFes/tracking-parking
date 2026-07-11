@@ -1507,7 +1507,7 @@ requires-dist = [
     { name = "opencv-python", specifier = ">=4.13.0.92" },
     { name = "pandas", specifier = ">=3.0.3" },
     { name = "seaborn", specifier = ">=0.13.2" },
-    { name = "ultralytics", specifier = ">=8.4.72" },
+    { name = "ultralytics", specifier = "==8.4.72" },
     { name = "wandb", specifier = ">=0.28.0" },
 ]
 

@@ -11,7 +11,7 @@ dependencies = [
     "opencv-python>=4.13.0.92",
     "pandas>=3.0.3",
     "seaborn>=0.13.2",
-    "ultralytics>=8.4.72",
+    "ultralytics==8.4.72",
     "wandb>=0.28.0",
 ]
 

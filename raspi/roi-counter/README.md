@@ -10,6 +10,7 @@ roi-counter/
 │   ├── roi.py              # ROI判定・y範囲取得
 │   ├── progress.py         # 進行度 s の計算
 │   ├── tracker.py          # 車両状態データクラス
+│   ├── tracker_lifecycle.py # run間のYOLO tracker状態初期化
 │   ├── counter.py          # 状態機械・入出庫カウント
 │   └── visualizer.py       # フレーム描画
 ├── scripts/
@@ -101,8 +102,16 @@ tracker・device・warm-up・動画保存/表示設定を一致させる。こ�
 
 **出力**: `data/outputs/{EXP_NAME}/sweep_{timestamp}/results.csv`
 ```
-s_low, s_high, count_in, count_out, gt_in, gt_out, count_error, elapsed_ms, mean_frame_ms, max_frame_ms
+s_low, s_high, count_in, count_out, gt_in, gt_out, count_error, elapsed_ms, mean_frame_ms, max_frame_ms, tracker_reset, tracker_reset_method, ultralytics_version
 ```
+
+各閾値runの直前にYOLO trackerを初期化し、前runのtrack IDや追跡状態を
+持ち越さない。`tracker.reset()`を利用できない場合はモデルを再生成し、それも
+失敗した場合は独立性を保証できないため評価を中断する。
+
+`tracker_reset_method`には、初回のclean状態を表す`clean_start`、trackerの
+`reset()`を実行した`tracker_reset`、モデルを再生成した`model_reload`のいずれかを
+記録する。`ultralytics_version`と併せて、各runの初期化方法を追跡できる。
 
 ---
 
@@ -126,6 +135,13 @@ s_low, s_high, count_in, count_out, gt_in, gt_out, count_error, elapsed_ms, mean
 ├── results.csv      # 動画 × パラメータごとの詳細
 └── mae_summary.csv  # パラメータごとのMAEサマリー
 ```
+
+`results.csv`には`tracker_reset`、`tracker_reset_method`、`ultralytics_version`も
+記録する。`03_sweep_params.py`と同じ共通処理を使い、動画・閾値の各runを独立させる。
+
+tracker初期化処理はUltralyticsの内部APIに依存するため、依存バージョンは
+`8.4.72`に固定している。バージョン更新時は`test_tracker_lifecycle.py`を含む
+ROI counterのテストを実行すること。
 
 ---
 
