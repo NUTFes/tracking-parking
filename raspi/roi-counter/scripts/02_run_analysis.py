@@ -179,7 +179,6 @@ def main() -> None:
                         detections = list(zip(xyxy_values, track_ids))
                     num_tracks = len(detections)
 
-                draw_items = []
                 with elapsed_timer() as counting_timer:
                     for xyxy, tid in detections:
                         x1, y1, x2, y2 = map(int, xyxy)
@@ -189,16 +188,24 @@ def main() -> None:
                         s = calc_s(cy, y_min, y_max)
                         track_id = int(tid)
                         counter.update(track_id, s)
-                        state = counter.tracks[track_id].state
-                        draw_items.append(((x1, y1, x2, y2), track_id, s, state))
 
                 quit_requested = False
                 with elapsed_timer() as output_timer:
-                    for bbox, track_id, s, state in draw_items:
-                        draw_bbox_with_info(frame, bbox, track_id, s, state)
-                    draw_roi(frame, ROI_POINTS)
-                    draw_band_lines(frame, ROI_POINTS, y_min, y_max, S_LOW, S_HIGH)
-                    draw_counts(frame, counter.count_in, counter.count_out)
+                    if writer is not None or SHOW_DISPLAY:
+                        for xyxy, tid in detections:
+                            x1, y1, x2, y2 = map(int, xyxy)
+                            cx, cy = (x1 + x2) / 2, float(y2)
+                            if not is_in_roi((cx, cy), ROI_POINTS):
+                                continue
+                            s = calc_s(cy, y_min, y_max)
+                            track_id = int(tid)
+                            state = counter.tracks[track_id].state
+                            draw_bbox_with_info(
+                                frame, (x1, y1, x2, y2), track_id, s, state
+                            )
+                        draw_roi(frame, ROI_POINTS)
+                        draw_band_lines(frame, ROI_POINTS, y_min, y_max, S_LOW, S_HIGH)
+                        draw_counts(frame, counter.count_in, counter.count_out)
                     if writer is not None:
                         writer.write(frame)
                     if SHOW_DISPLAY:
