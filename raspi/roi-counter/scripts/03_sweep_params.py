@@ -16,6 +16,7 @@ import cv2
 from src.counter import Counter
 from src.roi import get_roi_y_range, is_in_roi
 from src.progress import calc_s
+from src.tracker_lifecycle import TrackerResetResult, prepare_model_for_run
 
 # ── パラメータ ──────────────────────────────────────────────────────────────
 VIDEO_SOURCE = "data/inputs/IMG_2788_fixed.MOV"  # ファイル専用
@@ -31,6 +32,7 @@ ROI_POINTS = [
 S_LOW_RANGE  = [0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40]
 S_HIGH_RANGE = [0.60, 0.65, 0.70, 0.75, 0.80, 0.85, 0.90]
 VEHICLE_CLASSES = [2, 7]  # COCO: 2=car, 7=truck
+MODEL_PATH = "yolov8s.pt"
 # ────────────────────────────────────────────────────────────────────────────
 
 
@@ -47,10 +49,6 @@ def load_gt(video_source: str, gt_path_str: str) -> dict:
 
 def run_once(model: YOLO, video_source: str, roi_points, y_min: float, y_max: float,
              s_low: float, s_high: float) -> dict:
-    # TODO(wandb連携・§4.2): 同一 YOLO インスタンスを persist=True で使い回しているため，
-    #   前 run のトラック ID 状態が次 run に持ち越され run の独立性が崩れる．
-    #   04_multi_video_mae.py の reset_or_reload_model() と同様に run 冒頭で
-    #   トラッカー状態をリセットすること（本スクリプトへの適用は別途スコープ）．
     cap = cv2.VideoCapture(video_source)
     counter = Counter(s_low, s_high)
     frame_times = []
@@ -81,6 +79,31 @@ def run_once(model: YOLO, video_source: str, roi_points, y_min: float, y_max: fl
     }
 
 
+def build_result_row(s_low: float, s_high: float, res: dict, gt: dict,
+                     reset_result: TrackerResetResult) -> dict:
+    gt_in = gt.get("in")
+    gt_out = gt.get("out")
+    count_error = None
+    if gt_in is not None and gt_out is not None:
+        count_error = abs(res["count_in"] - gt_in) + abs(res["count_out"] - gt_out)
+
+    return {
+        "s_low":                s_low,
+        "s_high":               s_high,
+        "count_in":             res["count_in"],
+        "count_out":            res["count_out"],
+        "gt_in":                gt_in,
+        "gt_out":               gt_out,
+        "count_error":          count_error,
+        "elapsed_ms":           res["elapsed_ms"],
+        "mean_frame_ms":        res["mean_frame_ms"],
+        "max_frame_ms":         res["max_frame_ms"],
+        "tracker_reset":        reset_result.succeeded,
+        "tracker_reset_method": reset_result.method,
+        "ultralytics_version":  reset_result.ultralytics_version,
+    }
+
+
 def main() -> None:
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     base = Path("data/outputs") / EXP_NAME if EXP_NAME else Path("data/outputs")
@@ -89,11 +112,8 @@ def main() -> None:
     csv_path = out_dir / "results.csv"
 
     gt = load_gt(VIDEO_SOURCE, GT_PATH)
-    gt_in  = gt.get("in")
-    gt_out = gt.get("out")
-
     y_min, y_max = get_roi_y_range(ROI_POINTS)
-    model = YOLO("yolov8s.pt")
+    model = YOLO(MODEL_PATH)
 
     total = len(S_LOW_RANGE) * len(S_HIGH_RANGE)
     done = 0
@@ -103,27 +123,16 @@ def main() -> None:
         for s_high in S_HIGH_RANGE:
             if s_low >= s_high:
                 continue
+            reset_result = prepare_model_for_run(model, MODEL_PATH)
+            model = reset_result.model
             res = run_once(model, VIDEO_SOURCE, ROI_POINTS, y_min, y_max, s_low, s_high)
-            count_error = None
-            if gt_in is not None and gt_out is not None:
-                count_error = abs(res["count_in"] - gt_in) + abs(res["count_out"] - gt_out)
-            row = {
-                "s_low":          s_low,
-                "s_high":         s_high,
-                "count_in":       res["count_in"],
-                "count_out":      res["count_out"],
-                "gt_in":          gt_in,
-                "gt_out":         gt_out,
-                "count_error":    count_error,
-                "elapsed_ms":     res["elapsed_ms"],
-                "mean_frame_ms":  res["mean_frame_ms"],
-                "max_frame_ms":   res["max_frame_ms"],
-            }
+            row = build_result_row(s_low, s_high, res, gt, reset_result)
             rows.append(row)
             pd.DataFrame(rows).to_csv(csv_path, index=False)
             done += 1
             print(f"[{done}/{total}] s_low={s_low:.2f} s_high={s_high:.2f} "
-                  f"IN={res['count_in']} OUT={res['count_out']} err={count_error}")
+                  f"IN={res['count_in']} OUT={res['count_out']} "
+                  f"err={row['count_error']} reset={reset_result.method}")
 
     print(f"\n出力: {csv_path}")
 

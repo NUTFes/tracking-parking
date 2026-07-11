@@ -22,6 +22,7 @@ from ultralytics import YOLO
 from src.counter import Counter
 from src.roi import get_roi_y_range, is_in_roi
 from src.progress import calc_s
+from src.tracker_lifecycle import prepare_model_for_run
 
 from common.wandb_logger import ExperimentLogger, build_exp_key
 from common.frame_stats import compute_timing_stats
@@ -77,37 +78,6 @@ def load_configs(gt_dir: str) -> list[dict]:
     return configs
 
 
-def reset_or_reload_model(model: YOLO) -> tuple[YOLO, bool]:
-    """run 間でトラッカー状態をリセットし，独立した run を保証する．
-
-    現状は同一 YOLO インスタンスを persist=True で使い回すため，前 run のトラック
-    ID 状態が次 run に持ち越される．これでは run が独立でなく W&B 上の比較が成立しない．
-
-    優先順（§4.2）:
-      1. model.predictor.trackers[*].reset()（ultralytics のバージョン依存のため hasattr で確認）
-         初回 run では predictor 未生成＝持ち越し状態が無いので clean 扱い．
-      2. reset 不可なら YOLO(MODEL_PATH) を再生成（ロード時間は増えるが正しさを優先）．
-
-    Returns:
-        (model, tracker_reset): 使用すべきモデルと，独立性を担保できたか．
-    """
-    predictor = getattr(model, "predictor", None)
-    trackers = getattr(predictor, "trackers", None) if predictor is not None else None
-
-    # 初回 run など持ち越し状態が無い場合は clean
-    if not trackers:
-        return model, True
-
-    if all(hasattr(t, "reset") for t in trackers):
-        for t in trackers:
-            t.reset()
-        return model, True
-
-    # フォールバック: reset 不可なので再生成して独立性を保証
-    print("[WARN] tracker.reset() が使えないため YOLO を再生成します")
-    return YOLO(MODEL_PATH), True
-
-
 def build_detail_row(s_low: float, s_high: float, video_name: str, res: dict,
                       gt_in: int, gt_out: int, count_error: int, stats: dict,
                       use_wandb: bool, wandb_run_id, exp_key: str) -> dict:
@@ -128,6 +98,9 @@ def build_detail_row(s_low: float, s_high: float, video_name: str, res: dict,
         "mean_frame_ms":  stats["frame_ms_mean"],
         "max_frame_ms":   stats["frame_ms_max"],
         "elapsed_ms":     stats["total_ms"],
+        "tracker_reset":        res["tracker_reset"],
+        "tracker_reset_method": res["tracker_reset_method"],
+        "ultralytics_version":  res["ultralytics_version"],
     }
     if use_wandb:
         row["wandb_run_id"] = wandb_run_id
@@ -137,14 +110,11 @@ def build_detail_row(s_low: float, s_high: float, video_name: str, res: dict,
 
 def run_once(model: YOLO, video_source: str, roi_points: list,
              s_low: float, s_high: float) -> dict:
-    # run 冒頭でトラッカー状態をリセット（前 run のトラック ID を持ち越さない）
-    model, tracker_reset = reset_or_reload_model(model)
-
     cap = cv2.VideoCapture(video_source)
     if not cap.isOpened():
         print(f"[ERROR] 動画を開けません: {video_source}")
         return {"count_in": 0, "count_out": 0, "total_frames": 0,
-                "frame_times": [], "tracker_reset": tracker_reset,
+                "frame_times": [],
                 "timings": [],
                 "frame_width": 0, "frame_height": 0, "source_fps": 0.0}
 
@@ -205,7 +175,6 @@ def run_once(model: YOLO, video_source: str, roi_points: list,
         "total_frames":  frame_idx,
         "frame_times":   frame_times,
         "timings":       timing_records,
-        "tracker_reset": tracker_reset,
         "frame_width":   w,
         "frame_height":  h,
         "source_fps":    float(fps),
@@ -237,9 +206,14 @@ def main() -> None:
             gt_out = cfg["out"]
 
             print(f"  [{s_low:.2f}/{s_high:.2f}] {Path(video).name} ...", end=" ", flush=True)
+            reset_result = prepare_model_for_run(model, MODEL_PATH)
+            model = reset_result.model
             res = run_once(model, video, roi, s_low, s_high)
-            if not res["tracker_reset"]:
-                print("[WARN] トラッカー状態をリセットできませんでした（run 独立性に注意）")
+            res.update({
+                "tracker_reset": reset_result.succeeded,
+                "tracker_reset_method": reset_result.method,
+                "ultralytics_version": reset_result.ultralytics_version,
+            })
             count_error = abs(res["count_in"] - gt_in) + abs(res["count_out"] - gt_out)
             errors.append(count_error)
             measured = require_measured_timings(res["timings"])
@@ -263,6 +237,8 @@ def main() -> None:
                 "source_fps": res["source_fps"],
                 "vehicle_classes": VEHICLE_CLASSES,
                 "tracker_reset": res["tracker_reset"],
+                "tracker_reset_method": res["tracker_reset_method"],
+                "ultralytics_version": res["ultralytics_version"],
                 "yolo_conf": YOLO_CONF,
                 "yolo_iou": YOLO_IOU,
                 "yolo_device": YOLO_DEVICE,
@@ -309,7 +285,8 @@ def main() -> None:
                 s_low, s_high, Path(video).name, res, gt_in, gt_out, count_error,
                 stats, USE_WANDB, logger.run_id, config["exp_key"],
             ))
-            print(f"IN={res['count_in']} OUT={res['count_out']} err={count_error}")
+            print(f"IN={res['count_in']} OUT={res['count_out']} err={count_error} "
+                  f"reset={res['tracker_reset_method']}")
 
         mae = sum(errors) / len(errors)
         summary_rows.append({
