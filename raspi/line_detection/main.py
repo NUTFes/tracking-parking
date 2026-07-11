@@ -8,21 +8,83 @@ YOLOv8トラッキングと外積法を使用した高精度な入出庫カウ�
 import cv2
 import argparse
 import os
+import platform
 import sys
-import time
+from dataclasses import dataclass
+from pathlib import Path
 from ultralytics import YOLO
 
-# 親ディレクトリをパスに追加
+# 自ディレクトリと raspi/ をパスに追加
 sys.path.insert(0, os.path.dirname(__file__))
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from detection.config import Config
 from detection.line_crossing import LineCrossingDetector, get_vehicle_point
 from detection.tracker import VehicleTracker
 from result_output.video_writer import VideoAnnotator
 from result_output.event_logger import EventLogger
+from common.frame_stats import compute_timing_stats
+from common.frame_timing import (
+    DEFAULT_WARMUP_FRAMES,
+    TIMING_SCHEMA_VERSION,
+    FrameTiming,
+    build_comparison_key,
+    elapsed_timer,
+    model_synchronizer,
+    require_measured_timings,
+    sha256_file,
+    validate_warmup_frames,
+)
+from common.wandb_logger import (
+    ExperimentLogger,
+    build_exp_key,
+    next_log_boundary,
+    should_log_frame,
+    validate_log_interval_sec,
+)
 
 
-def process_video(video_path: str, config: Config, output_dir: str):
+WEBCAM_FPS = 30.0
+
+
+@dataclass(frozen=True)
+class RuntimeSettings:
+    use_wandb: bool
+    wandb_project: str
+    device_accelerator: str
+    log_interval_sec: float
+    yolo_device: str | None
+    yolo_imgsz: int
+    yolo_tracker: str
+    warmup_frames: int
+
+    @classmethod
+    def from_env(cls) -> "RuntimeSettings":
+        """Config.from_env() が .env を読み込んだ後に呼ぶ。"""
+
+        return cls(
+            use_wandb=os.getenv("USE_WANDB", "false").lower() == "true",
+            wandb_project=os.getenv("WANDB_PROJECT", "tracking-parking"),
+            device_accelerator=os.getenv("EXP_DEVICE_ACCELERATOR", "cpu"),
+            log_interval_sec=validate_log_interval_sec(os.getenv("LOG_INTERVAL_SEC", "5")),
+            yolo_device=os.getenv("YOLO_DEVICE") or None,
+            yolo_imgsz=int(os.getenv("YOLO_IMGSZ", "640")),
+            yolo_tracker=os.getenv("YOLO_TRACKER", "botsort.yaml"),
+            warmup_frames=validate_warmup_frames(
+                os.getenv("WARMUP_FRAMES", DEFAULT_WARMUP_FRAMES)
+            ),
+        )
+
+
+def process_video(
+    video_path: str | int,
+    config: Config,
+    output_dir: str,
+    *,
+    use_wandb: bool = False,
+    device_name: str = platform.node(),
+    runtime: RuntimeSettings | None = None,
+):
     """
     動画を処理
 
@@ -31,6 +93,8 @@ def process_video(video_path: str, config: Config, output_dir: str):
         config: 設定
         output_dir: 出力ディレクトリ
     """
+    runtime = runtime or RuntimeSettings.from_env()
+
     print("\n" + "=" * 60)
     print("2ライン検知システム")
     print("=" * 60)
@@ -46,14 +110,14 @@ def process_video(video_path: str, config: Config, output_dir: str):
     print(f"✓ YOLOモデル読み込み: {config.model_path}")
 
     # 動画キャプチャを開く
-    cap = cv2.VideoCapture(video_path if video_path else 0)
+    cap = cv2.VideoCapture(video_path)
 
     if not cap.isOpened():
         print(f"エラー: 動画を開けません: {video_path}")
         return
 
     # 動画情報を取得
-    fps = cap.get(cv2.CAP_PROP_FPS)
+    fps = cap.get(cv2.CAP_PROP_FPS) or WEBCAM_FPS
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -85,7 +149,7 @@ def process_video(video_path: str, config: Config, output_dir: str):
     print("✓ アノテーター初期化")
 
     # イベントロガーを初期化
-    logger = EventLogger(video_path=video_path)
+    event_logger = EventLogger(video_path=video_path)
     print("✓ イベントロガー初期化")
 
     # 出力動画ライターを初期化
@@ -95,7 +159,7 @@ def process_video(video_path: str, config: Config, output_dir: str):
         output_video_path = os.path.join(
             output_dir,
             "videos",
-            f"annotated_{os.path.basename(video_path)}"
+            f"annotated_{Path(str(video_path)).name if isinstance(video_path, str) else 'camera.mp4'}"
         )
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         out = cv2.VideoWriter(output_video_path, fourcc, fps, (width, height))
@@ -103,126 +167,237 @@ def process_video(video_path: str, config: Config, output_dir: str):
 
     print("\n処理開始...\n")
 
+    input_type = "file" if isinstance(video_path, str) else "camera"
+    dataset = Path(str(video_path)).stem if isinstance(video_path, str) else f"camera_{video_path}"
+    exp_params = {
+        "cleanup_threshold": config.cleanup_threshold,
+        "margin": config.margin,
+        "max_frame_gap": config.max_frame_gap,
+    }
+    run_config = {
+        "logic_name": "line_detection",
+        "dataset": dataset,
+        "input_type": input_type,
+        "device_name": device_name,
+        "device_accelerator": runtime.device_accelerator,
+        "model_path": config.model_path,
+        "input_sha256": sha256_file(str(video_path)) if isinstance(video_path, str) else None,
+        "model_sha256": sha256_file(config.model_path),
+        "frame_width": width,
+        "frame_height": height,
+        "source_fps": float(fps),
+        "vehicle_classes": config.vehicle_classes,
+        "tracker_reset": True,
+        "log_interval_sec": runtime.log_interval_sec,
+        "yolo_conf": config.confidence_threshold,
+        "yolo_iou": config.iou_threshold,
+        "yolo_device": runtime.yolo_device,
+        "yolo_imgsz": runtime.yolo_imgsz,
+        "tracker_config": runtime.yolo_tracker,
+        "warmup_frames": runtime.warmup_frames,
+        "save_video": config.save_video,
+        "show_display": config.show_display,
+        "timing_schema_version": TIMING_SCHEMA_VERSION,
+        **exp_params,
+    }
+    run_config["comparison_key"] = build_comparison_key(run_config)
+    run_config["exp_key"] = build_exp_key(
+        "line_detection", dataset, device_name, exp_params
+    )
+    wandb_logger = ExperimentLogger(
+        project=runtime.wandb_project,
+        config=run_config,
+        group="line_detection",
+        job_type="speed_eval",
+        tags=[device_name, input_type],
+        enabled=use_wandb,
+    )
+    wandb_logger.init_accuracy_placeholders()
+    wandb_logger.define_metric("net_flow", step_metric="t_rel_sec")
+
     # 2. フレーム毎処理
     frame_id = 0
+    timing_records: list[FrameTiming] = []
+    next_log_sec = 0.0
+    prev_count_in = 0
+    prev_count_out = 0
+    synchronize_model = model_synchronizer(model, runtime.yolo_device)
+    exit_code = 0
 
-    while cap.isOpened():
-        start_time = time.perf_counter()
+    try:
+        while cap.isOpened():
+            with elapsed_timer() as end_to_end_timer:
+                with elapsed_timer() as read_timer:
+                    ret, frame = cap.read()
+                if not ret:
+                    break
 
-        ret, frame = cap.read()
-        if not ret:
-            break
-
-        # 2.1 YOLO検知+トラッキング（車両クラスのみ）
-        results = model.track(
-            frame,
-            persist=True,
-            conf=config.confidence_threshold,
-            iou=config.iou_threshold,
-            classes=config.vehicle_classes,
-            verbose=False
-        )
-
-        # 2.2 各車両の処理
-        if results[0].boxes.id is not None:
-            track_ids = results[0].boxes.id.int().tolist()
-            bboxes = results[0].boxes.xyxy.tolist()
-
-            for track_id, bbox in zip(track_ids, bboxes):
-                # 車両代表点取得
-                vehicle_point = get_vehicle_point(bbox)
-
-                # 状態更新
-                state = tracker.update(track_id, vehicle_point, frame_id)
-
-                # ライン交差検知
-                if state.prev_point is not None:
-                    # Line1交差検知
-                    line1_dir = detector.detect_line1_crossing(
-                        state.prev_point,
-                        state.curr_point
+                # 2.1 YOLO検知+トラッキング。CPU化までを共通推論区間に含める。
+                with elapsed_timer(synchronize_model) as inference_timer:
+                    results = model.track(
+                        frame,
+                        persist=True,
+                        conf=config.confidence_threshold,
+                        iou=config.iou_threshold,
+                        classes=config.vehicle_classes,
+                        verbose=False,
+                        device=runtime.yolo_device,
+                        imgsz=runtime.yolo_imgsz,
+                        tracker=runtime.yolo_tracker,
                     )
+                    boxes = results[0].boxes
+                    if boxes.id is None:
+                        detections = []
+                    else:
+                        detections = list(zip(
+                            boxes.id.int().cpu().tolist(),
+                            boxes.xyxy.cpu().tolist(),
+                        ))
 
-                    # Line2交差検知
-                    line2_dir = detector.detect_line2_crossing(
-                        state.prev_point,
-                        state.curr_point
-                    )
+                pending_events = []
+                with elapsed_timer() as counting_timer:
+                    for track_id, bbox in detections:
+                        vehicle_point = get_vehicle_point(bbox)
+                        state = tracker.update(track_id, vehicle_point, frame_id)
+                        if state.prev_point is None:
+                            continue
 
-                    # Line1交差イベントを記録
-                    if line1_dir and not state.counted:
-                        state.record_line1_crossing(line1_dir, frame_id)
-
-                    # Line2交差を記録
-                    if line2_dir:
-                        state.record_line2_crossing(line2_dir, frame_id)
-
-                    # ハイブリッド方式でイベント判定
-                    if tracker.should_count_event(state):
-                        # カウント済みとしてマーク
-                        event_type = tracker.mark_as_counted(track_id)
-
-                        # イベントをログに記録
-                        logger.record_event(
-                            track_id=track_id,
-                            event_type=event_type,
-                            frame_id=frame_id,
-                            fps=fps,
-                            confidence=state.confidence,
-                            line2_crossed=(state.line2_direction is not None)
+                        line1_dir = detector.detect_line1_crossing(
+                            state.prev_point, state.curr_point
                         )
+                        line2_dir = detector.detect_line2_crossing(
+                            state.prev_point, state.curr_point
+                        )
+                        if line1_dir and not state.counted:
+                            state.record_line1_crossing(line1_dir, frame_id)
+                        if line2_dir:
+                            state.record_line2_crossing(line2_dir, frame_id)
+                        if tracker.should_count_event(state):
+                            event_type = tracker.mark_as_counted(track_id)
+                            pending_events.append({
+                                "track_id": track_id,
+                                "event_type": event_type,
+                                "frame_id": frame_id,
+                                "fps": fps,
+                                "confidence": state.confidence,
+                                "line2_crossed": state.line2_direction is not None,
+                            })
+                    tracker.cleanup_stale_tracks(frame_id)
 
-                        print(f"[Frame {frame_id}] ID:{track_id} {event_type} (信頼度: {state.confidence})")
+                core_ms = inference_timer.elapsed_ms + counting_timer.elapsed_ms
+                quit_requested = False
+                with elapsed_timer() as output_timer:
+                    for event in pending_events:
+                        event_logger.record_event(**event)
+                    if config.save_video or config.show_display:
+                        annotated_frame = annotator.annotate_frame(
+                            frame, tracker, frame_id, core_ms
+                        )
+                    else:
+                        annotated_frame = frame
+                    if config.save_video and out:
+                        out.write(annotated_frame)
+                    if config.show_display:
+                        cv2.imshow("2ライン検知", annotated_frame)
+                        quit_requested = cv2.waitKey(1) & 0xFF == ord("q")
 
-        # 2.3 古い追跡をクリーンアップ
-        tracker.cleanup_stale_tracks(frame_id)
+            timing = FrameTiming(
+                frame_index=frame_id,
+                read_ms=read_timer.elapsed_ms,
+                inference_tracking_ms=inference_timer.elapsed_ms,
+                counting_logic_ms=counting_timer.elapsed_ms,
+                output_ms=output_timer.elapsed_ms,
+                end_to_end_ms=end_to_end_timer.elapsed_ms,
+                is_warmup=frame_id < runtime.warmup_frames,
+            )
+            timing_records.append(timing)
+            event_logger.record_frame_time(timing.core_ms)
 
-        # 2.4 処理時間を記録
-        processing_time_ms = (time.perf_counter() - start_time) * 1000
-        logger.record_frame_time(processing_time_ms)
+            # 観測処理は end_to_end 計測後に行う。
+            summary = tracker.get_summary()
+            count_in = summary["total_in"]
+            count_out = summary["total_out"]
+            count_changed = count_in != prev_count_in or count_out != prev_count_out
+            t_rel_sec = frame_id / fps if fps > 0 else 0.0
+            if should_log_frame(t_rel_sec, next_log_sec, count_changed):
+                wandb_logger.log_frame(
+                    step=frame_id,
+                    metrics={
+                        "t_rel_sec": t_rel_sec,
+                        "net_flow": count_in - count_out,
+                        "cumulative_in": count_in,
+                        "cumulative_out": count_out,
+                        **timing.to_dict(),
+                        "num_tracks": len(detections),
+                        "retained_states": len(tracker.states),
+                    },
+                )
+                next_log_sec = next_log_boundary(
+                    next_log_sec, t_rel_sec, runtime.log_interval_sec
+                )
+            prev_count_in = count_in
+            prev_count_out = count_out
 
-        # 2.5 アノテーション
-        annotated_frame = annotator.annotate_frame(
-            frame,
-            tracker,
-            frame_id,
-            processing_time_ms
-        )
+            if frame_id % 300 == 0:
+                wandb_logger.update_running_summary({
+                    "count_in": count_in,
+                    "count_out": count_out,
+                    "total_frames": frame_id + 1,
+                })
+            if frame_id % 30 == 0:
+                progress = (frame_id / total_frames * 100) if total_frames > 0 else 0
+                print(f"処理中... {frame_id}/{total_frames}フレーム ({progress:.1f}%)")
+            for event in pending_events:
+                print(
+                    f"[Frame {frame_id}] ID:{event['track_id']} "
+                    f"{event['event_type']} (信頼度: {event['confidence']})"
+                )
 
-        # 2.6 出力
-        if config.save_video and out:
-            out.write(annotated_frame)
-
-        if config.show_display:
-            cv2.imshow("2ライン検知", annotated_frame)
-            if cv2.waitKey(1) & 0xFF == ord('q'):
+            frame_id += 1
+            if quit_requested:
                 print("\nユーザーによる中断")
                 break
 
-        # 進捗表示
-        if frame_id % 30 == 0:
-            progress = (frame_id / total_frames * 100) if total_frames > 0 else 0
-            print(f"処理中... {frame_id}/{total_frames}フレーム ({progress:.1f}%)")
+        measured = require_measured_timings(timing_records)
+        timing_stats = compute_timing_stats(measured, float(fps))
+        tracker_summary = tracker.get_summary()
+        wandb_logger.set_summaries({
+            "count_in": tracker_summary["total_in"],
+            "count_out": tracker_summary["total_out"],
+            "total_frames": frame_id,
+            "measured_frames": len(measured),
+            **timing_stats,
+        })
 
-        frame_id += 1
-
-    # 3. クリーンアップ
-    cap.release()
-    if out:
-        out.release()
-    if config.show_display:
-        cv2.destroyAllWindows()
-
-    print("\n処理完了!")
-
-    # 4. ログを保存
-    if config.save_logs:
-        log_dir = os.path.join(output_dir, "logs")
-        logger.save_json(log_dir, tracker.get_summary())
-        logger.save_csv(log_dir)
-
-    # 5. サマリーを表示
-    logger.print_summary(tracker.get_summary())
+        print("\n処理完了!")
+        log_dir = Path(output_dir) / "logs"
+        if config.save_logs:
+            event_logger.save_json(
+                str(log_dir),
+                tracker_summary,
+                wandb_run_id=wandb_logger.run_id,
+                exp_key=run_config["exp_key"] if use_wandb else None,
+                timing_summary={
+                    "timing_schema_version": TIMING_SCHEMA_VERSION,
+                    "warmup_frames": runtime.warmup_frames,
+                    "measured_frames": len(measured),
+                    **timing_stats,
+                },
+            )
+            event_logger.save_csv(str(log_dir))
+        wandb_logger.save_run_id(log_dir)
+        event_logger.print_summary(tracker_summary, timing_summary=timing_stats)
+        return timing_stats
+    except BaseException:
+        exit_code = 1
+        raise
+    finally:
+        cap.release()
+        if out:
+            out.release()
+        if config.show_display:
+            cv2.destroyAllWindows()
+        wandb_logger.finish(exit_code=exit_code)
 
 
 def main():
@@ -253,6 +428,16 @@ def main():
         "--display",
         action="store_true",
         help="処理中の動画を表示"
+    )
+    parser.add_argument(
+        "--wandb",
+        action="store_true",
+        help="W&Bへ速度・台数メトリクスを記録"
+    )
+    parser.add_argument(
+        "--device-name",
+        default=None,
+        help="比較対象デバイス名"
     )
 
     args = parser.parse_args()
@@ -302,7 +487,15 @@ def main():
 
     # 動画を処理
     try:
-        process_video(video_path, config, output_dir)
+        runtime = RuntimeSettings.from_env()
+        process_video(
+            video_path,
+            config,
+            output_dir,
+            use_wandb=args.wandb or runtime.use_wandb,
+            device_name=args.device_name or os.getenv("EXP_DEVICE_NAME", platform.node()),
+            runtime=runtime,
+        )
         return 0
     except KeyboardInterrupt:
         print("\n\nユーザーによる中断")

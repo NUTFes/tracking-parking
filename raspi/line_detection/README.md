@@ -60,6 +60,7 @@ uv sync
 - numpy (数値演算)
 - torch, torchvision (深層学習)
 - pandas (データ処理)
+- wandb (実験管理・offline記録)
 
 ### 2. ライン座標の設定
 
@@ -117,6 +118,33 @@ python main.py --camera 0 --display
 
 ```bash
 python main.py --input data/inputs/test.mp4 --output /path/to/output
+```
+
+### 方式間の速度比較
+
+速度計測は timing schema v2 に従い、`read_ms`、`inference_tracking_ms`、
+`counting_logic_ms`、`core_ms`、`output_ms`、`end_to_end_ms` に分割する。
+方式比較では warm-up 除外後の `core_ms_p95`、実機のリアルタイム判定では
+`end_to_end_ms` と `deadline_miss_rate` を使用する。
+
+ROI方式と同じ動画・モデル・classes・confidence・IoU・image size・tracker・device・
+warm-up・動画保存/表示設定を指定して実行する。
+ROI方式の現在の既定値は`VEHICLE_CLASSES=2,7`、`CONFIDENCE_THRESHOLD=0.25`、
+`IOU_THRESHOLD=0.7`であり、`.env.template`もこの比較条件に揃えている。
+
+```bash
+WARMUP_FRAMES=30 YOLO_DEVICE=cpu YOLO_IMGSZ=640 \
+YOLO_TRACKER=botsort.yaml SAVE_VIDEO=false SHOW_DISPLAY=false \
+WANDB_MODE=offline python main.py --input data/inputs/test.mp4 \
+  --wandb --device-name raspi5
+```
+
+入力・モデルのSHA-256と上記条件から生成した`comparison_key`が同じrunだけを
+直接比較する。W&B送信は計測区間外で行うため、online/offlineの通信状態は
+速度値に含まれない。offline runは後日次のように同期する。
+
+```bash
+wandb sync <run_dir>
 ```
 
 ## 出力ファイル

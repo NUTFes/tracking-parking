@@ -19,4 +19,5 @@ dependencies = [
     # データ処理
     "pandas>=2.2.1",
     "lap>=0.5.13",
+    "wandb>=0.28.0",
 ]

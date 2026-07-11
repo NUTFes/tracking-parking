@@ -16,3 +16,6 @@ torchvision==0.17.2
 
 # データ処理
 pandas==2.2.1
+
+# 実験管理（WANDB_MODE=offline対応）
+wandb>=0.28.0

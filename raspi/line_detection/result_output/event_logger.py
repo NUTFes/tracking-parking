@@ -8,7 +8,6 @@ import csv
 import os
 from datetime import datetime
 from typing import List, Dict, Any
-from detection.tracker import VehicleState
 
 
 class Event:
@@ -104,7 +103,11 @@ class EventLogger:
         self.total_processing_time_ms += processing_time_ms
         self.total_frames += 1
 
-    def get_summary(self, tracker_summary: Dict) -> Dict[str, Any]:
+    def get_summary(
+        self,
+        tracker_summary: Dict,
+        timing_summary: Dict[str, Any] = None,
+    ) -> Dict[str, Any]:
         """
         サマリーを取得
 
@@ -114,8 +117,13 @@ class EventLogger:
         Returns:
             Dict: サマリー情報
         """
-        avg_time = (self.total_processing_time_ms / self.total_frames
-                   if self.total_frames > 0 else 0.0)
+        avg_time = (
+            timing_summary["core_ms_mean"]
+            if timing_summary is not None
+            else self.total_processing_time_ms / self.total_frames
+            if self.total_frames > 0
+            else 0.0
+        )
 
         return {
             "total_in": tracker_summary["total_in"],
@@ -126,7 +134,14 @@ class EventLogger:
             "avg_processing_time_ms": round(avg_time, 2)
         }
 
-    def save_json(self, output_dir: str, tracker_summary: Dict) -> str:
+    def save_json(
+        self,
+        output_dir: str,
+        tracker_summary: Dict,
+        wandb_run_id: str = None,
+        exp_key: str = None,
+        timing_summary: Dict[str, Any] = None,
+    ) -> str:
         """
         JSONファイルに保存
 
@@ -151,13 +166,22 @@ class EventLogger:
             "processed_at": self.start_time.isoformat(),
             "total_frames": self.total_frames,
             "avg_processing_time_ms": round(
-                self.total_processing_time_ms / self.total_frames
-                if self.total_frames > 0 else 0.0,
+                timing_summary["core_ms_mean"]
+                if timing_summary is not None
+                else self.total_processing_time_ms / self.total_frames
+                if self.total_frames > 0
+                else 0.0,
                 2
             ),
             "events": [event.to_dict() for event in self.events],
-            "summary": self.get_summary(tracker_summary)
+            "summary": self.get_summary(tracker_summary, timing_summary)
         }
+        if timing_summary is not None:
+            data["timing"] = timing_summary
+        if wandb_run_id is not None:
+            data["wandb_run_id"] = wandb_run_id
+        if exp_key is not None:
+            data["exp_key"] = exp_key
 
         # JSONファイルに書き込み
         with open(filepath, 'w', encoding='utf-8') as f:
@@ -219,14 +243,18 @@ class EventLogger:
         print(f"✓ CSVログを保存: {filepath}")
         return filepath
 
-    def print_summary(self, tracker_summary: Dict):
+    def print_summary(
+        self,
+        tracker_summary: Dict,
+        timing_summary: Dict[str, Any] = None,
+    ):
         """
         サマリーを出力
 
         Args:
             tracker_summary: VehicleTrackerのサマリー
         """
-        summary = self.get_summary(tracker_summary)
+        summary = self.get_summary(tracker_summary, timing_summary)
 
         print("\n" + "=" * 60)
         print("処理結果サマリー")
