@@ -117,6 +117,75 @@
 - `step` には常に実フレーム番号 `frame_idx` を使う。x 軸（`step_metric`）は `t_rel_sec`（データセット内の相対経過秒）。
 - 境界計算は while ループではなく除算による O(1) 計算で行う（`common.wandb_logger.next_log_boundary`）。フレーム抜け等で `t_rel_sec` が複数区間分ジャンプしても、1 回の計算で正しい次境界に到達する。
 
+### 2.4 速度計測契約（Issue #92、timing schema v2）
+
+ROI 方式と 2 ライン方式の速度を直接比較できるよう、両方式は
+`common/frame_timing.py` の同一フェーズ定義を使う。計測時計は単調増加する
+`time.perf_counter()` とし、単位はすべてミリ秒とする。
+
+| キー | 開始 | 終了 | 含める処理 |
+|---|---|---|---|
+| `read_ms` | `cap.read()` の直前 | 成功したフレームを受け取った直後 | 動画デコード、カメラのフレーム待ち |
+| `inference_tracking_ms` | `model.track()` の直前 | bbox と track ID を CPU 上で利用可能な値に変換した後 | YOLO 前処理・推論・後処理・追跡・デバイスから CPU への転送 |
+| `counting_logic_ms` | CPU 化済みの bbox/ID を受け取った直後 | 方式固有の状態更新と stale track cleanup の終了後 | ROI/進行度判定、またはライン交差判定と IN/OUT 確定 |
+| `core_ms` | 算出値 | 算出値 | `inference_tracking_ms + counting_logic_ms`。方式比較の主対象 |
+| `output_ms` | イベント・描画出力の直前 | 動画書き込み・画面表示の終了後 | イベント記録、アノテーション、`VideoWriter.write()`、`imshow()`、`waitKey()` |
+| `end_to_end_ms` | `cap.read()` の直前 | `output_ms` の終了後 | 1 フレームの本番処理全体。ただし後述の観測処理は除外 |
+
+`wandb.log()`、W&B summary 更新、進捗表示は観測処理であり、ネットワークや
+ローカルバッファの状態を検出方式の速度へ混入させないため、すべての計測区間から
+除外する。計測済みの `end_to_end_ms` を確定してからログを送る。
+
+方式選定の主指標は `core_ms_p95` とする。p95 は warm-up 除外後の 95% の
+フレームがその時間以内に完了したことを表し、平均値では見えにくい実運用上の
+カクつきを評価できる。`p50`、`p99`、`mean`、`min`、`max` も補助指標として保存する。
+
+Raspberry Pi 上のリアルタイム性は `end_to_end_ms` で評価する。フレーム予算と
+締切超過率は次式で定義する。
+
+```text
+frame_budget_ms = 1000 / source_fps
+deadline_miss_rate = count(end_to_end_ms > frame_budget_ms) / measured_frames
+```
+
+summary には `end_to_end_effective_fps`、`end_to_end_realtime_ok`、
+`deadline_miss_count`、`deadline_miss_rate` を保存する。既存の `frame_ms` 系キーと
+`effective_fps` / `realtime_ok` は互換性のため `core_ms` 系の deprecated alias として
+残し、新規のリアルタイム判定には使用しない。
+
+#### warm-up
+
+- 両方式とも `WARMUP_FRAMES`（既定 30）を使用し、config に `warmup_frames` を保存する。
+- warm-up 中も検出、追跡、カウント、出力は通常どおり実行し、速度 summary からだけ除外する。
+- summary に `measured_frames` を保存する。
+- `total_frames <= warmup_frames` の run は比較可能な統計を作れないためエラーとし、0 ms の有効値として保存しない。
+
+#### 非同期デバイスの同期
+
+CUDA/MPS などでは処理投入と完了が非同期になり得るため、
+`inference_tracking_ms` の開始直前と終了時刻取得直前にデバイス同期を行う。
+CPU は no-op とする。これにより GPU 処理が完了する前にタイマーだけ止まることを防ぐ。
+
+#### 同一条件 run の判定
+
+速度比較に使う run は、次の共通条件が一致しなければならない。
+
+| config | 意味と必要性 |
+|---|---|
+| `input_sha256` | 同名でも内容が異なる動画を区別する |
+| `model_sha256` | 同名でも重みが異なるモデルを区別する |
+| `frame_width` / `frame_height` / `source_fps` | 入力画素数とフレーム予算を固定する |
+| `vehicle_classes` | 検出・NMS・追跡対象を固定する |
+| `yolo_conf` / `yolo_iou` / `yolo_imgsz` | 候補数、後処理量、推論入力サイズを固定する |
+| `tracker_config` | ByteTrack/BoT-SORT とその閾値を固定する |
+| `device_name` / `device_accelerator` / `yolo_device` | 実機名と CPU/CUDA/MPS 等の実行先を固定する |
+| `warmup_frames` | 統計から除外する範囲を固定する |
+| `save_video` / `show_display` | `output_ms` と `end_to_end_ms` の出力条件を固定する |
+| `timing_schema_version` | 計測区間の定義が同じ run だけを比較する |
+
+上記を正規化して SHA-256 化した `comparison_key` を config に保存する。
+W&B では `comparison_key` が一致する ROI / 2 ライン run のみを直接比較する。
+
 ---
 
 ## 3. 実装するモジュール

@@ -1,6 +1,7 @@
 import numpy as np
 
-from common.frame_stats import compute_frame_stats
+from common.frame_stats import compute_frame_stats, compute_timing_stats
+from common.frame_timing import FrameTiming
 
 
 def test_basic_stats():
@@ -39,3 +40,18 @@ def test_zero_source_fps():
     # source_fps=0 でも例外を出さず realtime_ok=False
     stats = compute_frame_stats([10.0, 20.0], source_fps=0.0)
     assert stats["realtime_ok"] is False
+
+
+def test_timing_stats_use_core_for_comparison_and_end_to_end_for_deadline():
+    records = [
+        FrameTiming(0, 1.0, 20.0, 5.0, 2.0, 30.0, False),
+        FrameTiming(1, 1.0, 25.0, 5.0, 2.0, 40.0, False),
+    ]
+    stats = compute_timing_stats(records, source_fps=30.0)
+
+    assert stats["core_ms_mean"] == 27.5
+    assert stats["frame_ms_mean"] == stats["core_ms_mean"]
+    assert stats["frame_budget_ms"] == 1000.0 / 30.0
+    assert stats["deadline_miss_count"] == 1
+    assert stats["deadline_miss_rate"] == 0.5
+    assert stats["end_to_end_realtime_ok"] is False
