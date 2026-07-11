@@ -65,6 +65,25 @@ roi-counter/
 └── annotated.mp4   # 可視化済み動画
 ```
 
+`frames.csv` は timing schema v2 に従い、`read_ms`、`inference_tracking_ms`、
+`counting_logic_ms`、`core_ms`、`output_ms`、`end_to_end_ms` を保存する。
+`core_ms_p95` を方式比較、`end_to_end_ms` と `deadline_miss_rate` を実機の
+リアルタイム判定に使う。先頭 `WARMUP_FRAMES`（既定30）は処理自体には含めるが、
+速度 summary から除外する。
+
+主な速度比較用環境変数:
+
+```bash
+WARMUP_FRAMES=30 YOLO_IMGSZ=640 YOLO_TRACKER=botsort.yaml \
+SAVE_VIDEO=false SHOW_DISPLAY=false USE_WANDB=true \
+WANDB_MODE=offline python scripts/02_run_analysis.py
+```
+
+比較する2方式では、入力動画・モデル・vehicle classes・confidence・IoU・image size・
+tracker・device・warm-up・動画保存/表示設定を一致させる。これらから生成した
+`comparison_key` が同じ W&B run だけを直接比較する。offline run は後日
+`wandb sync <run_dir>` でアップロードできる。
+
 ---
 
 ### 03_sweep_params.py

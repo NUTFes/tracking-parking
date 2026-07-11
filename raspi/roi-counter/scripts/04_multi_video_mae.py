@@ -9,7 +9,6 @@ import json
 import os
 import platform
 import sys
-import time
 from datetime import datetime
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parents[1]))   # 既存: roi-counter/
@@ -25,7 +24,18 @@ from src.roi import get_roi_y_range, is_in_roi
 from src.progress import calc_s
 
 from common.wandb_logger import ExperimentLogger, build_exp_key
-from common.frame_stats import compute_frame_stats
+from common.frame_stats import compute_timing_stats
+from common.frame_timing import (
+    DEFAULT_WARMUP_FRAMES,
+    TIMING_SCHEMA_VERSION,
+    FrameTiming,
+    build_comparison_key,
+    elapsed_timer,
+    model_synchronizer,
+    require_measured_timings,
+    sha256_file,
+    validate_warmup_frames,
+)
 
 # ── パラメータ ──────────────────────────────────────────────────────────────
 GT_DIR   = "data/inputs/configs"   # 動画設定JSONのディレクトリ
@@ -45,6 +55,9 @@ EXP_DEVICE_ACCELERATOR = os.getenv("EXP_DEVICE_ACCELERATOR", "cpu")
 YOLO_CONF = 0.25
 YOLO_IOU = 0.7
 YOLO_DEVICE = os.getenv("YOLO_DEVICE") or None  # 未指定は Ultralytics の自動選択に委ねる
+YOLO_IMGSZ = int(os.getenv("YOLO_IMGSZ", "640"))
+YOLO_TRACKER = os.getenv("YOLO_TRACKER", "botsort.yaml")
+WARMUP_FRAMES = validate_warmup_frames(os.getenv("WARMUP_FRAMES", DEFAULT_WARMUP_FRAMES))
 # ────────────────────────────────────────────────────────────────────────────
 
 
@@ -132,6 +145,7 @@ def run_once(model: YOLO, video_source: str, roi_points: list,
         print(f"[ERROR] 動画を開けません: {video_source}")
         return {"count_in": 0, "count_out": 0, "total_frames": 0,
                 "frame_times": [], "tracker_reset": tracker_reset,
+                "timings": [],
                 "frame_width": 0, "frame_height": 0, "source_fps": 0.0}
 
     fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
@@ -139,35 +153,58 @@ def run_once(model: YOLO, video_source: str, roi_points: list,
     h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     y_min, y_max = get_roi_y_range(roi_points)
     counter = Counter(s_low, s_high)
-    frame_times = []
+    timing_records: list[FrameTiming] = []
     frame_idx = 0
+    synchronize_model = model_synchronizer(model, YOLO_DEVICE)
 
     while cap.isOpened():
-        ret, frame = cap.read()
-        if not ret:
-            break
-        t0 = time.perf_counter()
-        results = model.track(
-            frame, persist=True, verbose=False, classes=VEHICLE_CLASSES,
-            conf=YOLO_CONF, iou=YOLO_IOU, device=YOLO_DEVICE,
-        )
-        boxes = results[0].boxes
-        if boxes.id is not None:
-            for xyxy, tid in zip(boxes.xyxy.cpu().numpy(), boxes.id.cpu().numpy()):
-                x1, _, x2, y2 = map(int, xyxy)
-                cx, cy = (x1 + x2) / 2, float(y2)
-                if not is_in_roi((cx, cy), roi_points):
-                    continue
-                counter.update(int(tid), calc_s(cy, y_min, y_max))
-        frame_times.append((time.perf_counter() - t0) * 1000)
+        with elapsed_timer() as end_to_end_timer:
+            with elapsed_timer() as read_timer:
+                ret, frame = cap.read()
+            if not ret:
+                break
+
+            with elapsed_timer(synchronize_model) as inference_timer:
+                results = model.track(
+                    frame, persist=True, verbose=False, classes=VEHICLE_CLASSES,
+                    conf=YOLO_CONF, iou=YOLO_IOU, device=YOLO_DEVICE,
+                    imgsz=YOLO_IMGSZ, tracker=YOLO_TRACKER,
+                )
+                boxes = results[0].boxes
+                if boxes.id is None:
+                    detections = []
+                else:
+                    detections = list(zip(
+                        boxes.xyxy.cpu().numpy(), boxes.id.cpu().numpy()
+                    ))
+
+            with elapsed_timer() as counting_timer:
+                for xyxy, tid in detections:
+                    x1, _, x2, y2 = map(int, xyxy)
+                    cx, cy = (x1 + x2) / 2, float(y2)
+                    if not is_in_roi((cx, cy), roi_points):
+                        continue
+                    counter.update(int(tid), calc_s(cy, y_min, y_max))
+
+        timing_records.append(FrameTiming(
+            frame_index=frame_idx,
+            read_ms=read_timer.elapsed_ms,
+            inference_tracking_ms=inference_timer.elapsed_ms,
+            counting_logic_ms=counting_timer.elapsed_ms,
+            output_ms=0.0,
+            end_to_end_ms=end_to_end_timer.elapsed_ms,
+            is_warmup=frame_idx < WARMUP_FRAMES,
+        ))
         frame_idx += 1
 
     cap.release()
+    frame_times = [timing.core_ms for timing in timing_records]
     return {
         "count_in":      counter.count_in,
         "count_out":     counter.count_out,
         "total_frames":  frame_idx,
         "frame_times":   frame_times,
+        "timings":       timing_records,
         "tracker_reset": tracker_reset,
         "frame_width":   w,
         "frame_height":  h,
@@ -205,7 +242,9 @@ def main() -> None:
                 print("[WARN] トラッカー状態をリセットできませんでした（run 独立性に注意）")
             count_error = abs(res["count_in"] - gt_in) + abs(res["count_out"] - gt_out)
             errors.append(count_error)
-            elapsed_list.append(sum(res["frame_times"]))
+            measured = require_measured_timings(res["timings"])
+            stats = compute_timing_stats(measured, res["source_fps"])
+            elapsed_list.append(stats["core_ms_total"])
 
             # ── W&B: (s_low, s_high, video) の組ごとに 1 run（config + summary のみ）──
             dataset = Path(video).stem
@@ -217,6 +256,8 @@ def main() -> None:
                 "device_name": EXP_DEVICE_NAME,
                 "device_accelerator": EXP_DEVICE_ACCELERATOR,
                 "model_path": MODEL_PATH,
+                "input_sha256": sha256_file(video),
+                "model_sha256": sha256_file(MODEL_PATH),
                 "frame_width": res["frame_width"],
                 "frame_height": res["frame_height"],
                 "source_fps": res["source_fps"],
@@ -225,9 +266,16 @@ def main() -> None:
                 "yolo_conf": YOLO_CONF,
                 "yolo_iou": YOLO_IOU,
                 "yolo_device": YOLO_DEVICE,
+                "yolo_imgsz": YOLO_IMGSZ,
+                "tracker_config": YOLO_TRACKER,
+                "warmup_frames": WARMUP_FRAMES,
+                "save_video": False,
+                "show_display": False,
+                "timing_schema_version": TIMING_SCHEMA_VERSION,
                 "s_low": s_low,
                 "s_high": s_high,
             }
+            config["comparison_key"] = build_comparison_key(config)
             config["exp_key"] = build_exp_key("roi_counter", dataset, EXP_DEVICE_NAME, exp_params)
 
             logger = ExperimentLogger(
@@ -241,11 +289,11 @@ def main() -> None:
             run_exit_code = 0
             try:
                 logger.init_accuracy_placeholders()
-                stats = compute_frame_stats(res["frame_times"], res["source_fps"])
                 logger.set_summaries({
                     "count_in": res["count_in"],
                     "count_out": res["count_out"],
                     "total_frames": res["total_frames"],
+                    "measured_frames": len(measured),
                     "count_error": count_error,
                     "gt_in": gt_in,
                     "gt_out": gt_out,

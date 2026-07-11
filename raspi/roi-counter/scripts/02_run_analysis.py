@@ -2,7 +2,6 @@ import json
 import os
 import platform
 import sys
-import time
 from datetime import datetime
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parents[1]))   # 既存: roi-counter/
@@ -24,7 +23,18 @@ from common.wandb_logger import (
     should_log_frame,
     validate_log_interval_sec,
 )
-from common.frame_stats import compute_frame_stats
+from common.frame_stats import compute_timing_stats
+from common.frame_timing import (
+    DEFAULT_WARMUP_FRAMES,
+    TIMING_SCHEMA_VERSION,
+    FrameTiming,
+    build_comparison_key,
+    elapsed_timer,
+    model_synchronizer,
+    require_measured_timings,
+    sha256_file,
+    validate_warmup_frames,
+)
 
 # ── パラメータ ──────────────────────────────────────────────────────────────
 VIDEO_SOURCE: str | int = "data/inputs/IMG_2788.MOV"
@@ -52,6 +62,11 @@ LOG_INTERVAL_SEC = validate_log_interval_sec(os.getenv("LOG_INTERVAL_SEC", "5"))
 YOLO_CONF = 0.25
 YOLO_IOU = 0.7
 YOLO_DEVICE = os.getenv("YOLO_DEVICE") or None  # 未指定は Ultralytics の自動選択に委ねる
+YOLO_IMGSZ = int(os.getenv("YOLO_IMGSZ", "640"))
+YOLO_TRACKER = os.getenv("YOLO_TRACKER", "botsort.yaml")
+WARMUP_FRAMES = validate_warmup_frames(os.getenv("WARMUP_FRAMES", DEFAULT_WARMUP_FRAMES))
+SAVE_VIDEO = os.getenv("SAVE_VIDEO", "true").lower() == "true"
+SHOW_DISPLAY = os.getenv("SHOW_DISPLAY", "true").lower() == "true"
 # ────────────────────────────────────────────────────────────────────────────
 
 WEBCAM_FPS = 30.0
@@ -77,8 +92,10 @@ def main() -> None:
     fps = cap.get(cv2.CAP_PROP_FPS) or WEBCAM_FPS
     w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    writer = cv2.VideoWriter(str(out_dir / "annotated.mp4"), fourcc, fps, (w, h))
+    writer = None
+    if SAVE_VIDEO:
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        writer = cv2.VideoWriter(str(out_dir / "annotated.mp4"), fourcc, fps, (w, h))
 
     counter = Counter(S_LOW, S_HIGH)
     y_min, y_max = get_roi_y_range(ROI_POINTS)
@@ -94,6 +111,8 @@ def main() -> None:
         "device_name": EXP_DEVICE_NAME,
         "device_accelerator": EXP_DEVICE_ACCELERATOR,
         "model_path": MODEL_PATH,
+        "input_sha256": sha256_file(str(VIDEO_SOURCE)) if isinstance(VIDEO_SOURCE, str) else None,
+        "model_sha256": sha256_file(MODEL_PATH),
         "frame_width": w,
         "frame_height": h,
         "source_fps": float(fps),
@@ -103,9 +122,16 @@ def main() -> None:
         "yolo_conf": YOLO_CONF,
         "yolo_iou": YOLO_IOU,
         "yolo_device": YOLO_DEVICE,
+        "yolo_imgsz": YOLO_IMGSZ,
+        "tracker_config": YOLO_TRACKER,
+        "warmup_frames": WARMUP_FRAMES,
+        "save_video": SAVE_VIDEO,
+        "show_display": SHOW_DISPLAY,
+        "timing_schema_version": TIMING_SCHEMA_VERSION,
         "s_low": S_LOW,
         "s_high": S_HIGH,
     }
+    config["comparison_key"] = build_comparison_key(config)
     config["exp_key"] = build_exp_key("roi_counter", dataset, EXP_DEVICE_NAME, exp_params)
 
     logger = ExperimentLogger(
@@ -120,42 +146,75 @@ def main() -> None:
     # 台数推移の x 軸を相対経過秒にする
     logger.define_metric("net_flow", step_metric="t_rel_sec")
 
-    frame_records = []
+    timing_records: list[FrameTiming] = []
     frame_idx = 0
     exit_code = 0
     # 相対時間サンプリング用の状態
     next_log_sec = 0.0
     prev_count_in = 0
     prev_count_out = 0
+    synchronize_model = model_synchronizer(model, YOLO_DEVICE)
 
     try:
         while cap.isOpened():
-            ret, frame = cap.read()
-            if not ret:
-                break
+            with elapsed_timer() as end_to_end_timer:
+                with elapsed_timer() as read_timer:
+                    ret, frame = cap.read()
+                read_ms = read_timer.elapsed_ms
+                if not ret:
+                    break
 
-            t_start = time.perf_counter()
-            results = model.track(
-                frame, persist=True, verbose=False, classes=VEHICLE_CLASSES,
-                conf=YOLO_CONF, iou=YOLO_IOU, device=YOLO_DEVICE,
+                with elapsed_timer(synchronize_model) as inference_timer:
+                    results = model.track(
+                        frame, persist=True, verbose=False, classes=VEHICLE_CLASSES,
+                        conf=YOLO_CONF, iou=YOLO_IOU, device=YOLO_DEVICE,
+                        imgsz=YOLO_IMGSZ, tracker=YOLO_TRACKER,
+                    )
+                    boxes = results[0].boxes
+                    if boxes.id is None:
+                        detections = []
+                    else:
+                        xyxy_values = boxes.xyxy.cpu().numpy()
+                        track_ids = boxes.id.cpu().numpy()
+                        detections = list(zip(xyxy_values, track_ids))
+                    num_tracks = len(detections)
+
+                draw_items = []
+                with elapsed_timer() as counting_timer:
+                    for xyxy, tid in detections:
+                        x1, y1, x2, y2 = map(int, xyxy)
+                        cx, cy = (x1 + x2) / 2, float(y2)
+                        if not is_in_roi((cx, cy), ROI_POINTS):
+                            continue
+                        s = calc_s(cy, y_min, y_max)
+                        track_id = int(tid)
+                        counter.update(track_id, s)
+                        state = counter.tracks[track_id].state
+                        draw_items.append(((x1, y1, x2, y2), track_id, s, state))
+
+                quit_requested = False
+                with elapsed_timer() as output_timer:
+                    for bbox, track_id, s, state in draw_items:
+                        draw_bbox_with_info(frame, bbox, track_id, s, state)
+                    draw_roi(frame, ROI_POINTS)
+                    draw_band_lines(frame, ROI_POINTS, y_min, y_max, S_LOW, S_HIGH)
+                    draw_counts(frame, counter.count_in, counter.count_out)
+                    if writer is not None:
+                        writer.write(frame)
+                    if SHOW_DISPLAY:
+                        cv2.imshow("02_run_analysis", frame)
+                        quit_requested = cv2.waitKey(1) & 0xFF == ord("q")
+
+            timing = FrameTiming(
+                frame_index=frame_idx,
+                read_ms=read_ms,
+                inference_tracking_ms=inference_timer.elapsed_ms,
+                counting_logic_ms=counting_timer.elapsed_ms,
+                output_ms=output_timer.elapsed_ms,
+                end_to_end_ms=end_to_end_timer.elapsed_ms,
+                is_warmup=frame_idx < WARMUP_FRAMES,
             )
-            boxes = results[0].boxes
-            num_tracks = 0 if boxes.id is None else len(boxes.id)
-
-            if boxes.id is not None:
-                for xyxy, tid in zip(boxes.xyxy.cpu().numpy(), boxes.id.cpu().numpy()):
-                    x1, y1, x2, y2 = map(int, xyxy)
-                    cx, cy = (x1 + x2) / 2, float(y2)
-                    if not is_in_roi((cx, cy), ROI_POINTS):
-                        continue
-                    s = calc_s(cy, y_min, y_max)
-                    track_id = int(tid)
-                    counter.update(track_id, s)
-                    state = counter.tracks[track_id].state
-                    draw_bbox_with_info(frame, (x1, y1, x2, y2), track_id, s, state)
-
-            frame_ms = (time.perf_counter() - t_start) * 1000
-            frame_records.append({"frame_index": frame_idx, "frame_ms": frame_ms})
+            timing_records.append(timing)
 
             # ── W&B 時系列ログ（相対時間ベース＋カウント変化時は必ず記録）──────
             t_rel_sec = frame_idx / fps if fps > 0 else 0.0
@@ -170,7 +229,14 @@ def main() -> None:
                         "net_flow": counter.count_in - counter.count_out,
                         "cumulative_in": counter.count_in,
                         "cumulative_out": counter.count_out,
-                        "frame_ms": frame_ms,
+                        "read_ms": timing.read_ms,
+                        "inference_tracking_ms": timing.inference_tracking_ms,
+                        "counting_logic_ms": timing.counting_logic_ms,
+                        "core_ms": timing.core_ms,
+                        "output_ms": timing.output_ms,
+                        "end_to_end_ms": timing.end_to_end_ms,
+                        "frame_ms": timing.core_ms,
+                        "is_warmup": timing.is_warmup,
                         "num_tracks": num_tracks,
                         "retained_states": len(counter.tracks),
                     },
@@ -180,22 +246,18 @@ def main() -> None:
             prev_count_in = counter.count_in
             prev_count_out = counter.count_out
 
-            draw_roi(frame, ROI_POINTS)
-            draw_band_lines(frame, ROI_POINTS, y_min, y_max, S_LOW, S_HIGH)
-            draw_counts(frame, counter.count_in, counter.count_out)
-            writer.write(frame)
-            cv2.imshow("02_run_analysis", frame)
-            if cv2.waitKey(1) & 0xFF == ord("q"):
+            frame_idx += 1
+            if quit_requested:
                 break
 
-            frame_idx += 1
-
         cap.release()
-        writer.release()
-        cv2.destroyAllWindows()
+        if writer is not None:
+            writer.release()
+        if SHOW_DISPLAY:
+            cv2.destroyAllWindows()
 
-        frame_ms_list = [r["frame_ms"] for r in frame_records]
-        stats = compute_frame_stats(frame_ms_list, float(fps))
+        measured = require_measured_timings(timing_records)
+        stats = compute_timing_stats(measured, float(fps))
         result = {
             "count_in":    counter.count_in,
             "count_out":   counter.count_out,
@@ -203,6 +265,9 @@ def main() -> None:
             "mean_frame_ms": stats["frame_ms_mean"],
             "max_frame_ms":  stats["frame_ms_max"],
             "total_ms":    stats["total_ms"],
+            "timing_schema_version": TIMING_SCHEMA_VERSION,
+            "warmup_frames": WARMUP_FRAMES,
+            "measured_frames": len(measured),
             "s_low":  S_LOW,
             "s_high": S_HIGH,
         }
@@ -218,13 +283,16 @@ def main() -> None:
             for t in counter.get_all_tracks()
         ]
         pd.DataFrame(vehicles).to_csv(out_dir / "vehicles.csv", index=False)
-        pd.DataFrame(frame_records).to_csv(out_dir / "frames.csv", index=False)
+        pd.DataFrame([record.to_dict() for record in timing_records]).to_csv(
+            out_dir / "frames.csv", index=False
+        )
 
         # ── W&B summary（速度統計＋台数）──────────────────────────────────────
         logger.set_summaries({
             "count_in": counter.count_in,
             "count_out": counter.count_out,
             "total_frames": frame_idx,
+            "measured_frames": len(measured),
             **stats,
         })
         logger.save_run_id(out_dir)
