@@ -5,7 +5,8 @@ Weights & Biases 連携の薄いラッパ（両検出ロジック共通）
   → wandb 未インストール環境・CI・オフライン実行で既存挙動と完全一致する。
 - WANDB_MODE（online/offline）は wandb 側の標準挙動に委譲（本ラッパで上書きしない）。
   オフライン計測 → 後日 `wandb sync <run_dir>` でアップロードできる。
-- `build_exp_key()` は両ロジック・後追い評価スクリプトが必ず共有する突合キー生成関数。
+- 新規runの識別子は `common.run_identity` で生成する。
+- `build_exp_key()` は過去データとの互換用にのみ残している。
 """
 
 import json
@@ -31,13 +32,14 @@ ACCURACY_PLACEHOLDER_KEYS = [
 
 def build_exp_key(logic_name: str, dataset: str, device_name: str, params: Dict[str, Any]) -> str:
     """
-    run を一意に再特定するための複合キーを生成する（全スクリプト共通）。
+    旧形式の複合キーを生成する（過去データとの互換用）。
 
     形式: f"{logic_name}__{dataset}__{param_str}__{device_name}"
         param_str は params をキー名の昇順ソートで "k1=v1_k2=v2" に正規化する
         （float は f"{v:g}"）。
 
-    各スクリプトで独自フォーマットを組み立ててはならない（突合キーとして機能しなくなるため）。
+    新規runでは `build_condition_key()` を使い、config.exp_key は
+    config.condition_key のaliasとして保存する。
     """
     parts = []
     for key in sorted(params.keys()):
@@ -96,7 +98,7 @@ class ExperimentLogger:
         """
         Args:
             project: W&B プロジェクト名
-            config: run 開始時に固定するスカラ設定（exp_key を含む）
+            config: run 開始時に固定する設定（condition_key / execution_id を含む）
             group: run のグループ（= logic_name）
             job_type: "speed_eval" / "accuracy_eval" 等
             tags: device_name, input_type 等
@@ -106,6 +108,8 @@ class ExperimentLogger:
         self._wandb = None
         self._run = None
         self._exp_key = config.get("exp_key") if config else None
+        self._condition_key = config.get("condition_key") if config else None
+        self._execution_id = config.get("execution_id") if config else None
 
         if not self.enabled:
             return
@@ -120,6 +124,7 @@ class ExperimentLogger:
             group=group,
             job_type=job_type,
             tags=tags,
+            name=config.get("display_name"),
         )
 
     @property
@@ -178,16 +183,21 @@ class ExperimentLogger:
         self._wandb.finish(exit_code=exit_code)
 
     def save_run_id(self, out_dir: Path) -> None:
-        """out_dir/"wandb_run_id.txt" に run.id と exp_key を書き出す。"""
+        """out_dir/"wandb_run_id.txt" にW&Bとローカルの識別子を書き出す。"""
         if not self.enabled:
             return
         out_dir = Path(out_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
-        text = f"wandb_run_id={self.run_id}\nexp_key={self._exp_key}\n"
+        text = (
+            f"wandb_run_id={self.run_id}\n"
+            f"execution_id={self._execution_id}\n"
+            f"condition_key={self._condition_key}\n"
+            f"exp_key={self._exp_key}\n"
+        )
         (out_dir / "wandb_run_id.txt").write_text(text, encoding="utf-8")
 
     def append_to_result_json(self, result_path: Path) -> None:
-        """既存の result.json へ wandb_run_id / exp_key を追記する。
+        """既存の result.json へW&Bとローカルの識別子を追記する。
 
         ファイルが無い / 無効時は何もしない（後方互換）。
         """
@@ -198,6 +208,8 @@ class ExperimentLogger:
             return
         data = json.loads(result_path.read_text(encoding="utf-8"))
         data["wandb_run_id"] = self.run_id
+        data["execution_id"] = self._execution_id
+        data["condition_key"] = self._condition_key
         data["exp_key"] = self._exp_key
         result_path.write_text(
             json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
