@@ -25,8 +25,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parents[1]))   # raspi/（common 共有のため）
 
-from common.wandb_logger import build_exp_key  # noqa: F401  （突合キーは全員が共有）
-
 # ── 設定 ────────────────────────────────────────────────────────────────────
 WANDB_PROJECT_PATH = "tracking-parking"   # 例: "entity/project" or "project"
 EVAL_UNIT = "event"                        # "event" or "detection"
@@ -37,11 +35,16 @@ ACCURACY_KEYS = ["accuracy", "precision", "recall", "f1", "tp", "fp", "fn", "tn"
 # ────────────────────────────────────────────────────────────────────────────
 
 
+class AmbiguousRunError(RuntimeError):
+    """一意にrunを特定できず、誤更新を避けるため処理を止める場合の例外。"""
+
+
 def load_eval_rows(input_path: Path) -> list[dict]:
     """SAM3 由来の評価結果テーブル（CSV / JSON）を読み込む。
 
     各行に per-run の accuracy/precision/recall/f1/tp/fp/fn/tn と、
-    対応する `wandb_run_id` または `exp_key` を含める。
+    対応する `wandb_run_id`、`execution_id`、`condition_key` のいずれかを含める。
+    旧データについては `exp_key` も利用できる。
     """
     if input_path.suffix == ".json":
         data = json.loads(input_path.read_text(encoding="utf-8"))
@@ -57,10 +60,11 @@ def load_eval_rows(input_path: Path) -> list[dict]:
 def find_run(api, row: dict):
     """評価行に対応する W&B run を 1 つ特定する。
 
-    優先: wandb_run_id で直接取得。無ければ config.exp_key 一致で検索（全走査は避ける）。
+    優先順: wandb_run_id → execution_id → condition_key → 旧exp_key。
+    config検索が複数一致した場合は候補を示す AmbiguousRunError を送出する。
 
     Returns:
-        run or None（0 件 / 複数件は None を返し、呼び出し側が WARN してスキップ）
+        run or None（0件はWARNしてスキップ）
     """
     run_id = row.get("wandb_run_id")
     if run_id:
@@ -70,20 +74,33 @@ def find_run(api, row: dict):
             print(f"[WARN] wandb_run_id={run_id} の run を取得できません: {e}")
             return None
 
-    exp_key = row.get("exp_key")
-    if not exp_key:
-        print("[WARN] wandb_run_id も exp_key も無い行をスキップします")
+    search_candidates = (
+        ("execution_id", row.get("execution_id")),
+        ("condition_key", row.get("condition_key")),
+        ("exp_key", row.get("exp_key")),
+    )
+    field, value = next(
+        ((field, value) for field, value in search_candidates if value),
+        (None, None),
+    )
+    if field is None:
+        print(
+            "[WARN] wandb_run_id / execution_id / condition_key / exp_key "
+            "のいずれも無い行をスキップします"
+        )
         return None
 
-    runs = list(api.runs(WANDB_PROJECT_PATH, filters={"config.exp_key": exp_key}))
+    runs = list(api.runs(WANDB_PROJECT_PATH, filters={f"config.{field}": value}))
     if len(runs) == 0:
-        print(f"[WARN] exp_key={exp_key} に一致する run がありません。スキップします")
+        print(f"[WARN] {field}={value} に一致する run がありません。スキップします")
         return None
     if len(runs) > 1:
-        # 複数件は最新を選ぶのではなく人間に判断させる
-        ids = ", ".join(r.id for r in runs)
-        print(f"[WARN] exp_key={exp_key} に複数 run が一致（{ids}）。人手で確認してください。スキップします")
-        return None
+        candidates = ", ".join(
+            f"{run.id} ({getattr(run, 'name', 'no-name')})" for run in runs
+        )
+        raise AmbiguousRunError(
+            f"{field}={value} に複数runが一致しました: {candidates}"
+        )
     return runs[0]
 
 
@@ -121,13 +138,21 @@ def main() -> int:
         # TODO(GT 未整備): SAM3 出力から accuracy/precision/... を算出するマッチングロジック本体は
         #   GT データが揃ってから実装する。ここでは入力テーブルに算出済み値が入っている前提で
         #   run 特定 → summary 更新のインターフェースのみ確定させている。
-        run = find_run(api, row)
+        try:
+            run = find_run(api, row)
+        except AmbiguousRunError as exc:
+            print(f"[ERROR] {exc}")
+            print("誤ったrunへの書き込みを避けるため処理を停止します")
+            return 2
         if run is None:
             continue
 
         update = build_summary_update(row)
         if args.dry_run:
-            print(f"[DRY-RUN] run={run.id} exp_key={row.get('exp_key')} → {update}")
+            print(
+                f"[DRY-RUN] run={run.id} "
+                f"condition_key={row.get('condition_key')} → {update}"
+            )
             continue
 
         run.summary.update(update)
