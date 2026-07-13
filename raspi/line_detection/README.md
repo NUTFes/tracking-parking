@@ -143,11 +143,25 @@ WANDB_MODE=offline python main.py --input data/inputs/test.mp4 \
 直接比較する。W&B送信は計測区間外で行うため、online/offlineの通信状態は
 速度値に含まれない。offline runは後日次のように同期する。
 
+実験runの識別には、用途を分けた次の値を使用する。
+
+- `condition_key`: Line1・Line2・駐車場基準点、検知パラメータ、入力・モデルhash、
+  Git・主要ライブラリ版などの型付きcanonical JSONから生成する条件hash
+- `execution_id`: 同条件の再実行も区別する実行ごとのUUID
+- `wandb_run_id`: W&Bが発行するID（W&B有効時のみ）
+- `display_name`: W&B UI向けの可読名。一意性の判定には使用しない
+
+旧`exp_key`は移行期間中のみ`condition_key`のaliasとして残す。
+
 ```bash
 wandb sync <run_dir>
 ```
 
 ## 出力ファイル
+
+W&Bの有効・無効にかかわらず、runごとに
+`data/outputs/manifests/{execution_id}.json`を保存する。manifestには上記ID、
+完全な実験config、イベントログ・CSV・動画の絶対パスを記録する。
 
 ### アノテーション動画 (`data/outputs/videos/`)
 
@@ -164,6 +178,8 @@ wandb sync <run_dir>
 {
   "video_path": "data/inputs/test.mp4",
   "processed_at": "2026-06-24T10:30:00",
+  "execution_id": "d45174ea-4de7-4bac-9d44-1ab9c86bd07a",
+  "condition_key": "ck1_...",
   "total_frames": 900,
   "avg_processing_time_ms": 48.5,
   "events": [

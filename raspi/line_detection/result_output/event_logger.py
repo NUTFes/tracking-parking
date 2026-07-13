@@ -139,6 +139,8 @@ class EventLogger:
         output_dir: str,
         tracker_summary: Dict,
         wandb_run_id: str = None,
+        execution_id: str = None,
+        condition_key: str = None,
         exp_key: str = None,
         timing_summary: Dict[str, Any] = None,
     ) -> str:
@@ -148,6 +150,10 @@ class EventLogger:
         Args:
             output_dir: 出力ディレクトリ
             tracker_summary: VehicleTrackerのサマリー
+            wandb_run_id: W&Bが発行したrun ID（無効時はNone）
+            execution_id: 実行ごとのUUID
+            condition_key: 条件のcanonical JSONから生成したhash
+            exp_key: condition_keyの後方互換alias
 
         Returns:
             str: 保存したファイルのパス
@@ -180,6 +186,10 @@ class EventLogger:
             data["timing"] = timing_summary
         if wandb_run_id is not None:
             data["wandb_run_id"] = wandb_run_id
+        if execution_id is not None:
+            data["execution_id"] = execution_id
+        if condition_key is not None:
+            data["condition_key"] = condition_key
         if exp_key is not None:
             data["exp_key"] = exp_key
 

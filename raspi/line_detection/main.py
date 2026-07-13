@@ -32,15 +32,21 @@ from common.frame_timing import (
     elapsed_timer,
     model_synchronizer,
     require_measured_timings,
+    resolve_model_device,
     sha256_file,
     validate_warmup_frames,
 )
 from common.wandb_logger import (
     ExperimentLogger,
-    build_exp_key,
     next_log_boundary,
     should_log_frame,
     validate_log_interval_sec,
+)
+from common.run_identity import (
+    build_display_name,
+    build_run_identity,
+    collect_reproducibility_info,
+    write_run_manifest,
 )
 
 
@@ -74,6 +80,51 @@ class RuntimeSettings:
                 os.getenv("WARMUP_FRAMES", DEFAULT_WARMUP_FRAMES)
             ),
         )
+
+
+LINE_CONDITION_KEYS = (
+    "logic_name",
+    "input_type",
+    "input_sha256",
+    "model_sha256",
+    "line1_points",
+    "line2_points",
+    "parking_reference_point",
+    "vehicle_classes",
+    "method",
+    "margin",
+    "max_frame_gap",
+    "cleanup_threshold",
+    "tracker_reset",
+    "log_interval_sec",
+    "yolo_conf",
+    "yolo_iou",
+    "yolo_device",
+    "yolo_imgsz",
+    "tracker_config",
+    "tracker_config_sha256",
+    "device_name",
+    "device_accelerator",
+    "frame_width",
+    "frame_height",
+    "source_fps",
+    "warmup_frames",
+    "save_video",
+    "save_logs",
+    "show_display",
+    "timing_schema_version",
+    "git_sha",
+    "git_dirty",
+    "git_dirty_fingerprint",
+    "python_version",
+    "library_versions",
+)
+
+
+def build_line_condition(run_config: dict) -> dict:
+    """2ライン方式の結果・記録へ影響する条件だけを抽出する。"""
+
+    return {key: run_config.get(key) for key in LINE_CONDITION_KEYS}
 
 
 def process_video(
@@ -154,6 +205,7 @@ def process_video(
 
     # 出力動画ライターを初期化
     out = None
+    output_video_path = None
     if config.save_video:
         os.makedirs(os.path.join(output_dir, "videos"), exist_ok=True)
         output_video_path = os.path.join(
@@ -174,36 +226,51 @@ def process_video(
         "margin": config.margin,
         "max_frame_gap": config.max_frame_gap,
     }
+    reproducibility = collect_reproducibility_info()
     run_config = {
         "logic_name": "line_detection",
         "dataset": dataset,
         "input_type": input_type,
+        "input_source": str(video_path),
         "device_name": device_name,
         "device_accelerator": runtime.device_accelerator,
         "model_path": config.model_path,
         "input_sha256": sha256_file(str(video_path)) if isinstance(video_path, str) else None,
         "model_sha256": sha256_file(config.model_path),
+        "line1_points": [list(config.line1.start), list(config.line1.end)],
+        "line2_points": [list(config.line2.start), list(config.line2.end)],
+        "parking_reference_point": list(config.parking_ref_point),
         "frame_width": width,
         "frame_height": height,
         "source_fps": float(fps),
         "vehicle_classes": config.vehicle_classes,
+        "method": config.method,
         "tracker_reset": True,
         "log_interval_sec": runtime.log_interval_sec,
         "yolo_conf": config.confidence_threshold,
         "yolo_iou": config.iou_threshold,
-        "yolo_device": runtime.yolo_device,
+        "yolo_device_requested": runtime.yolo_device,
+        "yolo_device": resolve_model_device(model, runtime.yolo_device),
         "yolo_imgsz": runtime.yolo_imgsz,
         "tracker_config": runtime.yolo_tracker,
+        "tracker_config_sha256": sha256_file(runtime.yolo_tracker),
         "warmup_frames": runtime.warmup_frames,
         "save_video": config.save_video,
+        "save_logs": config.save_logs,
         "show_display": config.show_display,
         "timing_schema_version": TIMING_SCHEMA_VERSION,
         **exp_params,
+        **reproducibility,
     }
     run_config["comparison_key"] = build_comparison_key(run_config)
-    run_config["exp_key"] = build_exp_key(
-        "line_detection", dataset, device_name, exp_params
+    condition = build_line_condition(run_config)
+    identity = build_run_identity(
+        condition,
+        display_name=build_display_name("line_detection", dataset, exp_params),
     )
+    run_config["condition"] = condition
+    run_config.update(identity)
+    run_config["exp_key"] = run_config["condition_key"]  # 旧データ利用箇所向けの互換alias
     wandb_logger = ExperimentLogger(
         project=runtime.wandb_project,
         config=run_config,
@@ -371,12 +438,15 @@ def process_video(
 
         print("\n処理完了!")
         log_dir = Path(output_dir) / "logs"
+        output_paths = []
         if config.save_logs:
-            event_logger.save_json(
+            json_path = event_logger.save_json(
                 str(log_dir),
                 tracker_summary,
                 wandb_run_id=wandb_logger.run_id,
-                exp_key=run_config["exp_key"] if use_wandb else None,
+                execution_id=run_config["execution_id"],
+                condition_key=run_config["condition_key"],
+                exp_key=run_config["exp_key"],
                 timing_summary={
                     "timing_schema_version": TIMING_SCHEMA_VERSION,
                     "warmup_frames": runtime.warmup_frames,
@@ -384,8 +454,20 @@ def process_video(
                     **timing_stats,
                 },
             )
-            event_logger.save_csv(str(log_dir))
+            csv_path = event_logger.save_csv(str(log_dir))
+            output_paths.extend([Path(json_path).resolve(), Path(csv_path).resolve()])
         wandb_logger.save_run_id(log_dir)
+        if use_wandb:
+            output_paths.append((log_dir / "wandb_run_id.txt").resolve())
+        if output_video_path is not None:
+            output_paths.append(Path(output_video_path).resolve())
+        write_run_manifest(
+            Path(output_dir) / "manifests" / f"{run_config['execution_id']}.json",
+            config=run_config,
+            output_dir=Path(output_dir),
+            output_paths=output_paths,
+            wandb_run_id=wandb_logger.run_id,
+        )
         event_logger.print_summary(tracker_summary, timing_summary=timing_stats)
         return timing_stats
     except BaseException:

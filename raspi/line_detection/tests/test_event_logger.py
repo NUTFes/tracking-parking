@@ -32,7 +32,9 @@ def test_save_json_includes_timing_and_wandb_reference(tmp_path):
         str(tmp_path),
         TRACKER_SUMMARY,
         wandb_run_id="run-1",
-        exp_key="exp-1",
+        execution_id="execution-1",
+        condition_key="condition-1",
+        exp_key="condition-1",
         timing_summary=timing,
     )
     data = json.loads(Path(path).read_text(encoding="utf-8"))
@@ -41,7 +43,9 @@ def test_save_json_includes_timing_and_wandb_reference(tmp_path):
     assert data["summary"]["avg_processing_time_ms"] == 20.0
     assert data["timing"] == timing
     assert data["wandb_run_id"] == "run-1"
-    assert data["exp_key"] == "exp-1"
+    assert data["execution_id"] == "execution-1"
+    assert data["condition_key"] == "condition-1"
+    assert data["exp_key"] == "condition-1"
 
 
 def test_save_json_keeps_wandb_keys_absent_when_disabled(tmp_path):
@@ -50,4 +54,6 @@ def test_save_json_keeps_wandb_keys_absent_when_disabled(tmp_path):
     data = json.loads(Path(path).read_text(encoding="utf-8"))
 
     assert "wandb_run_id" not in data
+    assert "execution_id" not in data
+    assert "condition_key" not in data
     assert "exp_key" not in data
