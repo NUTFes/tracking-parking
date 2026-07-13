@@ -24,7 +24,13 @@ from src.roi import get_roi_y_range, is_in_roi
 from src.progress import calc_s
 from src.tracker_lifecycle import prepare_model_for_run
 
-from common.wandb_logger import ExperimentLogger, build_exp_key
+from common.wandb_logger import ExperimentLogger
+from common.run_identity import (
+    build_display_name,
+    build_run_identity,
+    collect_reproducibility_info,
+    write_run_manifest,
+)
 from common.frame_stats import compute_timing_stats
 from common.frame_timing import (
     DEFAULT_WARMUP_FRAMES,
@@ -34,6 +40,7 @@ from common.frame_timing import (
     elapsed_timer,
     model_synchronizer,
     require_measured_timings,
+    resolve_model_device,
     sha256_file,
     validate_warmup_frames,
 )
@@ -61,6 +68,17 @@ YOLO_TRACKER = os.getenv("YOLO_TRACKER", "botsort.yaml")
 WARMUP_FRAMES = validate_warmup_frames(os.getenv("WARMUP_FRAMES", DEFAULT_WARMUP_FRAMES))
 # ────────────────────────────────────────────────────────────────────────────
 
+SWEEP_CONDITION_KEYS = (
+    "logic_name", "input_type", "input_sha256", "model_sha256", "roi_points",
+    "ground_truth_sha256", "gt_in", "gt_out", "vehicle_classes", "yolo_conf",
+    "yolo_iou", "yolo_device", "yolo_imgsz", "tracker_config",
+    "tracker_config_sha256", "tracker_reset", "ultralytics_version", "device_name",
+    "device_accelerator", "frame_width", "frame_height", "source_fps",
+    "warmup_frames", "save_video", "show_display", "timing_schema_version",
+    "s_low", "s_high", "git_sha", "git_dirty", "git_dirty_fingerprint",
+    "python_version", "library_versions",
+)
+
 
 def load_configs(gt_dir: str) -> list[dict]:
     configs = []
@@ -71,6 +89,8 @@ def load_configs(gt_dir: str) -> list[dict]:
                 print(f"[WARN] {p.name} に '{key}' がありません．スキップします．")
                 break
         else:
+            cfg["_config_path"] = str(p)
+            cfg["_config_sha256"] = sha256_file(str(p))
             configs.append(cfg)
     if not configs:
         print(f"[ERROR] {gt_dir} に有効なJSONが見つかりません")
@@ -78,12 +98,23 @@ def load_configs(gt_dir: str) -> list[dict]:
     return configs
 
 
+def build_sweep_condition(config: dict) -> dict:
+    """結果へ影響する条件を抽出する。
+
+    tracker_reset_method は clean_start / tracker_reset / model_reload のように
+    実行順や内部API対応状況で変わる実行時情報なので、condition_keyには含めない。
+    成否を示す tracker_reset は、不正なrunとの区別のため条件に含める。
+    """
+    return {key: config.get(key) for key in SWEEP_CONDITION_KEYS}
+
+
 def build_detail_row(s_low: float, s_high: float, video_name: str, res: dict,
                       gt_in: int, gt_out: int, count_error: int, stats: dict,
-                      use_wandb: bool, wandb_run_id, exp_key: str) -> dict:
+                      use_wandb: bool, wandb_run_id, execution_id: str,
+                      condition_key: str, exp_key: str) -> dict:
     """results.csv の1行を組み立てる。
 
-    wandb_run_id / exp_key は use_wandb=True のときのみ追加する
+    W&Bとの突合列は use_wandb=True のときのみ追加する
     （USE_WANDB=false で W&B 導入前と同じ列構成を維持するため）。
     """
     row = {
@@ -104,6 +135,8 @@ def build_detail_row(s_low: float, s_high: float, video_name: str, res: dict,
     }
     if use_wandb:
         row["wandb_run_id"] = wandb_run_id
+        row["execution_id"] = execution_id
+        row["condition_key"] = condition_key
         row["exp_key"] = exp_key
     return row
 
@@ -192,6 +225,9 @@ def main() -> None:
     print(f"動画数: {len(configs)}  パラメータ組み合わせ: {len(param_list)}")
 
     model = YOLO(MODEL_PATH)
+    model_sha256 = sha256_file(MODEL_PATH)
+    tracker_config_sha256 = sha256_file(YOLO_TRACKER)
+    reproducibility = collect_reproducibility_info()
     detail_rows = []
     summary_rows = []
 
@@ -227,11 +263,17 @@ def main() -> None:
                 "logic_name": "roi_counter",
                 "dataset": dataset,
                 "input_type": "file",
+                "input_source": video,
                 "device_name": EXP_DEVICE_NAME,
                 "device_accelerator": EXP_DEVICE_ACCELERATOR,
                 "model_path": MODEL_PATH,
                 "input_sha256": sha256_file(video),
-                "model_sha256": sha256_file(MODEL_PATH),
+                "model_sha256": model_sha256,
+                "roi_points": [list(point) for point in roi],
+                "ground_truth_config": cfg["_config_path"],
+                "ground_truth_sha256": cfg["_config_sha256"],
+                "gt_in": gt_in,
+                "gt_out": gt_out,
                 "frame_width": res["frame_width"],
                 "frame_height": res["frame_height"],
                 "source_fps": res["source_fps"],
@@ -241,18 +283,28 @@ def main() -> None:
                 "ultralytics_version": res["ultralytics_version"],
                 "yolo_conf": YOLO_CONF,
                 "yolo_iou": YOLO_IOU,
-                "yolo_device": YOLO_DEVICE,
+                "yolo_device_requested": YOLO_DEVICE,
+                "yolo_device": resolve_model_device(model, YOLO_DEVICE),
                 "yolo_imgsz": YOLO_IMGSZ,
                 "tracker_config": YOLO_TRACKER,
+                "tracker_config_sha256": tracker_config_sha256,
                 "warmup_frames": WARMUP_FRAMES,
                 "save_video": False,
                 "show_display": False,
                 "timing_schema_version": TIMING_SCHEMA_VERSION,
                 "s_low": s_low,
                 "s_high": s_high,
+                **reproducibility,
             }
             config["comparison_key"] = build_comparison_key(config)
-            config["exp_key"] = build_exp_key("roi_counter", dataset, EXP_DEVICE_NAME, exp_params)
+            condition = build_sweep_condition(config)
+            identity = build_run_identity(
+                condition,
+                display_name=build_display_name("roi_counter", dataset, exp_params),
+            )
+            config["condition"] = condition
+            config.update(identity)
+            config["exp_key"] = config["condition_key"]  # 旧データ利用箇所向けの互換alias
 
             logger = ExperimentLogger(
                 project=WANDB_PROJECT,
@@ -283,8 +335,16 @@ def main() -> None:
 
             detail_rows.append(build_detail_row(
                 s_low, s_high, Path(video).name, res, gt_in, gt_out, count_error,
-                stats, USE_WANDB, logger.run_id, config["exp_key"],
+                stats, USE_WANDB, logger.run_id, config["execution_id"],
+                config["condition_key"], config["exp_key"],
             ))
+            write_run_manifest(
+                out_dir / "manifests" / f"{config['execution_id']}.json",
+                config=config,
+                output_dir=out_dir,
+                output_paths=["results.csv", "mae_summary.csv"],
+                wandb_run_id=logger.run_id,
+            )
             print(f"IN={res['count_in']} OUT={res['count_out']} err={count_error} "
                   f"reset={res['tracker_reset_method']}")
 

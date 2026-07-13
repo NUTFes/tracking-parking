@@ -63,7 +63,8 @@ roi-counter/
 ├── result.json     # カウント結果・処理時間サマリー
 ├── vehicles.csv    # track_id ごとの s_history・状態
 ├── frames.csv      # フレームごとの処理時間
-└── annotated.mp4   # 可視化済み動画
+├── annotated.mp4   # 可視化済み動画（SAVE_VIDEO=true時）
+└── run_manifest.json # run識別子・再現情報・出力パス
 ```
 
 `frames.csv` は timing schema v2 に従い、`read_ms`、`inference_tracking_ms`、
@@ -84,6 +85,19 @@ WANDB_MODE=offline python scripts/02_run_analysis.py
 tracker・device・warm-up・動画保存/表示設定を一致させる。これらから生成した
 `comparison_key` が同じ W&B run だけを直接比較する。offline run は後日
 `wandb sync <run_dir>` でアップロードできる。
+
+各runでは用途の異なる識別子を分離する。
+
+- `condition_key`: ROI、閾値、動画・モデルhash、tracker設定、Git・主要ライブラリ版など、
+  結果へ影響する条件の型付きcanonical JSONから生成するSHA-256。条件が同じ再実行では同じ値になる。
+- `execution_id`: 実行開始時に生成するUUID。同条件を再実行しても必ず別の値になる。
+- `wandb_run_id`: W&Bが発行するID（`USE_WANDB=true`時のみ）。
+- `display_name`: W&B UI向けの可読名。一意性の判定には使わない。
+
+`exp_key` は移行期間中のみ `condition_key` のaliasとして保存する。新規の突合では
+`wandb_run_id`、`execution_id`、`condition_key` の順で使用する。
+`run_manifest.json`はW&Bの有効・無効にかかわらず保存し、上記ID、W&B config、
+ローカル出力の絶対パスを相互参照できるようにする。
 
 ---
 
@@ -133,11 +147,15 @@ s_low, s_high, count_in, count_out, gt_in, gt_out, count_error, elapsed_ms, mean
 **出力**: `data/outputs/{EXP_NAME}/mae_{timestamp}/`
 ```
 ├── results.csv      # 動画 × パラメータごとの詳細
-└── mae_summary.csv  # パラメータごとのMAEサマリー
+├── mae_summary.csv  # パラメータごとのMAEサマリー
+└── manifests/       # 動画 × パラメータrunごとのmanifest（execution_id.json）
 ```
 
 `results.csv`には`tracker_reset`、`tracker_reset_method`、`ultralytics_version`も
 記録する。`03_sweep_params.py`と同じ共通処理を使い、動画・閾値の各runを独立させる。
+`USE_WANDB=true`の場合は`wandb_run_id`、`execution_id`、`condition_key`と互換用
+`exp_key`も記録する。W&Bを無効にした場合も`manifests/`には各runの識別子と
+再現情報が残る。
 
 tracker初期化処理はUltralyticsの内部APIに依存するため、依存バージョンは
 `8.4.72`に固定している。バージョン更新時は`test_tracker_lifecycle.py`を含む

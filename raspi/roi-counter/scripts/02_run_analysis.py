@@ -18,10 +18,15 @@ from src.visualizer import draw_band_lines, draw_bbox_with_info, draw_counts, dr
 
 from common.wandb_logger import (
     ExperimentLogger,
-    build_exp_key,
     next_log_boundary,
     should_log_frame,
     validate_log_interval_sec,
+)
+from common.run_identity import (
+    build_display_name,
+    build_run_identity,
+    collect_reproducibility_info,
+    write_run_manifest,
 )
 from common.frame_stats import compute_timing_stats
 from common.frame_timing import (
@@ -32,6 +37,7 @@ from common.frame_timing import (
     elapsed_timer,
     model_synchronizer,
     require_measured_timings,
+    resolve_model_device,
     sha256_file,
     validate_warmup_frames,
 )
@@ -104,15 +110,21 @@ def main() -> None:
     input_type = "file" if isinstance(VIDEO_SOURCE, str) else "camera"
     dataset = Path(str(VIDEO_SOURCE)).stem if isinstance(VIDEO_SOURCE, str) else "webcam"
     exp_params = {"s_low": S_LOW, "s_high": S_HIGH}
+    input_sha256 = sha256_file(str(VIDEO_SOURCE)) if isinstance(VIDEO_SOURCE, str) else None
+    model_sha256 = sha256_file(MODEL_PATH)
+    roi_points = [list(point) for point in ROI_POINTS]
+    reproducibility = collect_reproducibility_info()
     config = {
         "logic_name": "roi_counter",
         "dataset": dataset,
         "input_type": input_type,
+        "input_source": str(VIDEO_SOURCE),
         "device_name": EXP_DEVICE_NAME,
         "device_accelerator": EXP_DEVICE_ACCELERATOR,
         "model_path": MODEL_PATH,
-        "input_sha256": sha256_file(str(VIDEO_SOURCE)) if isinstance(VIDEO_SOURCE, str) else None,
-        "model_sha256": sha256_file(MODEL_PATH),
+        "input_sha256": input_sha256,
+        "model_sha256": model_sha256,
+        "roi_points": roi_points,
         "frame_width": w,
         "frame_height": h,
         "source_fps": float(fps),
@@ -121,18 +133,38 @@ def main() -> None:
         "log_interval_sec": LOG_INTERVAL_SEC,
         "yolo_conf": YOLO_CONF,
         "yolo_iou": YOLO_IOU,
-        "yolo_device": YOLO_DEVICE,
+        "yolo_device_requested": YOLO_DEVICE,
+        "yolo_device": resolve_model_device(model, YOLO_DEVICE),
         "yolo_imgsz": YOLO_IMGSZ,
         "tracker_config": YOLO_TRACKER,
+        "tracker_config_sha256": sha256_file(YOLO_TRACKER),
         "warmup_frames": WARMUP_FRAMES,
         "save_video": SAVE_VIDEO,
         "show_display": SHOW_DISPLAY,
         "timing_schema_version": TIMING_SCHEMA_VERSION,
         "s_low": S_LOW,
         "s_high": S_HIGH,
+        **reproducibility,
     }
     config["comparison_key"] = build_comparison_key(config)
-    config["exp_key"] = build_exp_key("roi_counter", dataset, EXP_DEVICE_NAME, exp_params)
+    condition = {
+        key: config.get(key)
+        for key in (
+            "logic_name", "input_type", "input_sha256", "model_sha256", "roi_points",
+            "vehicle_classes", "yolo_conf", "yolo_iou", "yolo_device", "yolo_imgsz",
+            "tracker_config", "tracker_config_sha256", "device_name", "device_accelerator",
+            "frame_width", "frame_height", "source_fps", "warmup_frames", "save_video",
+            "show_display", "timing_schema_version", "s_low", "s_high", "git_sha",
+            "git_dirty", "git_dirty_fingerprint", "python_version", "library_versions",
+        )
+    }
+    identity = build_run_identity(
+        condition,
+        display_name=build_display_name("roi_counter", dataset, exp_params),
+    )
+    config["condition"] = condition
+    config.update(identity)
+    config["exp_key"] = config["condition_key"]  # 旧データ利用箇所向けの互換alias
 
     logger = ExperimentLogger(
         project=WANDB_PROJECT,
@@ -304,6 +336,18 @@ def main() -> None:
         })
         logger.save_run_id(out_dir)
         logger.append_to_result_json(out_dir / "result.json")
+        output_paths = ["result.json", "vehicles.csv", "frames.csv"]
+        if SAVE_VIDEO:
+            output_paths.append("annotated.mp4")
+        if USE_WANDB:
+            output_paths.append("wandb_run_id.txt")
+        write_run_manifest(
+            out_dir / "run_manifest.json",
+            config=config,
+            output_dir=out_dir,
+            output_paths=output_paths,
+            wandb_run_id=logger.run_id,
+        )
 
         print(f"入庫: {counter.count_in}  出庫: {counter.count_out}")
         print(f"出力: {out_dir}")
