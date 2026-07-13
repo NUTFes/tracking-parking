@@ -1,4 +1,7 @@
+import json
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -54,6 +57,58 @@ def test_disabled_logger_is_noop(tmp_path: Path):
 
     # 無効時はファイルを書かない
     assert not (tmp_path / "wandb_run_id.txt").exists()
+
+
+def test_enabled_logger_uses_display_name_and_persists_all_ids(
+    tmp_path: Path, monkeypatch
+):
+    run = SimpleNamespace(id="wandb-1", summary={})
+    calls = {}
+
+    def fake_init(**kwargs):
+        calls["init"] = kwargs
+        return run
+
+    fake_wandb = SimpleNamespace(
+        init=fake_init,
+        define_metric=lambda *args, **kwargs: None,
+        log=lambda *args, **kwargs: None,
+        finish=lambda **kwargs: calls.update(finish=kwargs),
+    )
+    monkeypatch.setitem(sys.modules, "wandb", fake_wandb)
+    config = {
+        "condition_key": "condition-1",
+        "execution_id": "execution-1",
+        "display_name": "readable-run",
+        "exp_key": "condition-1",
+    }
+    logger = ExperimentLogger(
+        project="project",
+        config=config,
+        group="group",
+        job_type="speed_eval",
+        tags=["test"],
+        enabled=True,
+    )
+
+    assert calls["init"]["name"] == "readable-run"
+    assert calls["init"]["config"] == config
+    logger.save_run_id(tmp_path)
+    saved_ids = (tmp_path / "wandb_run_id.txt").read_text(encoding="utf-8")
+    assert "wandb_run_id=wandb-1" in saved_ids
+    assert "execution_id=execution-1" in saved_ids
+    assert "condition_key=condition-1" in saved_ids
+
+    result_path = tmp_path / "result.json"
+    result_path.write_text("{}", encoding="utf-8")
+    logger.append_to_result_json(result_path)
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    assert result == {
+        "wandb_run_id": "wandb-1",
+        "execution_id": "execution-1",
+        "condition_key": "condition-1",
+        "exp_key": "condition-1",
+    }
 
 
 def test_validate_log_interval_sec_accepts_positive():
