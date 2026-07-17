@@ -188,6 +188,7 @@ class LineSetupGUI:
 
         # ウィンドウを作成
         cv2.namedWindow(self.window_name)
+        cv2.imshow(self.window_name, self.display_frame)
         cv2.setMouseCallback(self.window_name, self.mouse_callback)
 
         print("=" * 60)
