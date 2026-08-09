@@ -12,6 +12,7 @@ import pandas as pd
 from ultralytics import YOLO
 
 from src.counter import Counter
+from src.events import EVENT_COLUMNS, build_event_rows
 from src.roi import get_roi_y_range, is_in_roi
 from src.progress import calc_s
 from src.visualizer import draw_band_lines, draw_bbox_with_info, draw_counts, draw_roi
@@ -219,7 +220,7 @@ def main() -> None:
                             continue
                         s = calc_s(cy, y_min, y_max)
                         track_id = int(tid)
-                        counter.update(track_id, s)
+                        counter.update(track_id, s, frame_idx)
 
                 quit_requested = False
                 with elapsed_timer() as output_timer:
@@ -322,6 +323,10 @@ def main() -> None:
             for t in counter.get_all_tracks()
         ]
         pd.DataFrame(vehicles).to_csv(out_dir / "vehicles.csv", index=False)
+        event_rows = build_event_rows(counter.get_all_tracks(), float(fps), WARMUP_FRAMES)
+        pd.DataFrame(event_rows, columns=list(EVENT_COLUMNS)).to_csv(
+            out_dir / "events.csv", index=False
+        )
         pd.DataFrame([record.to_dict() for record in timing_records]).to_csv(
             out_dir / "frames.csv", index=False
         )
@@ -336,7 +341,7 @@ def main() -> None:
         })
         logger.save_run_id(out_dir)
         logger.append_to_result_json(out_dir / "result.json")
-        output_paths = ["result.json", "vehicles.csv", "frames.csv"]
+        output_paths = ["result.json", "vehicles.csv", "events.csv", "frames.csv"]
         if SAVE_VIDEO:
             output_paths.append("annotated.mp4")
         if USE_WANDB:
