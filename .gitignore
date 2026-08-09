@@ -26,3 +26,6 @@ work-agents/
 work-agents/*
 .claude/
 .claude/*
+
+# ローカルディレクトリ
+**/*.local

@@ -85,3 +85,64 @@ def test_empty_run_result_contains_all_downstream_keys():
 def test_event_csv_columns_prefix_sweep_identity():
     assert mae.EVENT_CSV_COLUMNS[:3] == ("s_low", "s_high", "video")
     assert mae.EVENT_CSV_COLUMNS[3:] == mae.EVENT_COLUMNS
+
+
+def test_parse_float_list_returns_default_when_unset():
+    default = [0.1, 0.2]
+    assert mae.parse_float_list(None, default, source="TEST") == default
+    assert mae.parse_float_list("", default, source="TEST") == default
+    assert mae.parse_float_list("   ", default, source="TEST") == default
+
+
+def test_parse_float_list_parses_single_value():
+    assert mae.parse_float_list("0.25", [0.1], source="TEST") == [0.25]
+
+
+def test_parse_float_list_parses_multiple_values_with_whitespace():
+    assert mae.parse_float_list("0.10, 0.15,0.20", [], source="TEST") == [0.10, 0.15, 0.20]
+
+
+def test_parse_float_list_rejects_non_numeric_element():
+    try:
+        mae.parse_float_list("0.1,abc", [], source="S_LOW_LIST")
+        assert False, "ValueError が発生しませんでした"
+    except ValueError as exc:
+        assert "S_LOW_LIST" in str(exc)
+
+
+def test_parse_float_list_rejects_empty_element():
+    try:
+        mae.parse_float_list("0.1,,0.2", [], source="S_LOW_LIST")
+        assert False, "ValueError が発生しませんでした"
+    except ValueError as exc:
+        assert "S_LOW_LIST" in str(exc)
+
+
+def test_parse_float_list_rejects_out_of_range():
+    for raw in ("-0.1", "1.5"):
+        try:
+            mae.parse_float_list(raw, [], source="S_HIGH_LIST")
+            assert False, f"{raw!r} で ValueError が発生しませんでした"
+        except ValueError as exc:
+            assert "S_HIGH_LIST" in str(exc)
+
+
+def test_parse_float_list_rejects_nan_and_inf():
+    for raw in ("nan", "inf", "-inf"):
+        try:
+            mae.parse_float_list(raw, [], source="TEST")
+            assert False, f"{raw!r} で ValueError が発生しませんでした"
+        except ValueError:
+            pass
+
+
+def test_default_grid_has_no_invalid_low_high_pairs():
+    import itertools
+    invalid = [
+        (lo, hi)
+        for lo, hi in itertools.product(
+            [0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40], [0.60, 0.65]
+        )
+        if lo >= hi
+    ]
+    assert invalid == []

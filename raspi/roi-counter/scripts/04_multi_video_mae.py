@@ -46,12 +46,39 @@ from common.frame_timing import (
     validate_warmup_frames,
 )
 
+def parse_float_list(raw: str | None, default: list[float], *, source: str) -> list[float]:
+    """カンマ区切りの閾値リストを環境変数から読む。未設定・空文字なら default を返す。
+
+    各要素は 0.0〜1.0 の範囲の有限な数値である必要がある（比較実験の条件を
+    誤って壊さないよう、不正値は起動時に ValueError で明示的に拒否する）。
+    """
+    if raw is None or raw.strip() == "":
+        return default
+    values = []
+    for item in raw.split(","):
+        item = item.strip()
+        if item == "":
+            raise ValueError(f"{source} に空の要素が含まれています: {raw!r}")
+        try:
+            value = float(item)
+        except ValueError as exc:
+            raise ValueError(f"{source} の要素が数値として解釈できません: {item!r}") from exc
+        if not (0.0 <= value <= 1.0) or value != value or value in (float("inf"), float("-inf")):
+            raise ValueError(f"{source} の要素は0.0〜1.0の範囲である必要があります: {value!r}")
+        values.append(value)
+    return values
+
+
 # ── パラメータ ──────────────────────────────────────────────────────────────
 GT_DIR   = "data/inputs/configs"   # 動画設定JSONのディレクトリ
-EXP_NAME = "exp1_mae"
+EXP_NAME = os.getenv("EXP_NAME", "exp1_mae")
 
-S_LOW_LIST  = [0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40]
-S_HIGH_LIST = [0.60, 0.65]
+S_LOW_LIST  = parse_float_list(
+    os.getenv("S_LOW_LIST"), [0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40], source="S_LOW_LIST"
+)
+S_HIGH_LIST = parse_float_list(
+    os.getenv("S_HIGH_LIST"), [0.60, 0.65], source="S_HIGH_LIST"
+)
 VEHICLE_CLASSES = [2, 7]  # COCO: 2=car, 7=truck
 MODEL_PATH = "yolov8s.pt"
 
@@ -235,6 +262,11 @@ def main() -> None:
 
     configs = load_configs(GT_DIR)
     param_list = list(itertools.product(S_LOW_LIST, S_HIGH_LIST))
+    invalid_pairs = [(lo, hi) for lo, hi in param_list if lo >= hi]
+    if invalid_pairs:
+        raise ValueError(
+            f"s_low は s_high より小さい必要があります（不正な組み合わせ: {invalid_pairs}）"
+        )
     print(f"動画数: {len(configs)}  パラメータ組み合わせ: {len(param_list)}")
 
     model = YOLO(MODEL_PATH)
