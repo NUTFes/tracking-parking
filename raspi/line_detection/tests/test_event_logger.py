@@ -57,3 +57,25 @@ def test_save_json_keeps_wandb_keys_absent_when_disabled(tmp_path):
     assert "execution_id" not in data
     assert "condition_key" not in data
     assert "exp_key" not in data
+
+
+def test_save_json_includes_accuracy_block_when_provided(tmp_path):
+    logger = EventLogger(video_path="test.mp4")
+    accuracy = {"gt_in": 22, "gt_out": 0, "count_error": 2, "count_error_in": 2, "count_error_out": 0}
+
+    path = logger.save_json(
+        str(tmp_path),
+        TRACKER_SUMMARY,
+        accuracy_summary=accuracy,
+    )
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+
+    assert data["accuracy"] == accuracy
+
+
+def test_save_json_omits_accuracy_block_when_absent(tmp_path):
+    logger = EventLogger(video_path="test.mp4")
+    path = logger.save_json(str(tmp_path), TRACKER_SUMMARY)
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+
+    assert "accuracy" not in data

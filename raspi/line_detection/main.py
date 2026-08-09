@@ -476,6 +476,7 @@ def process_video(
                     "measured_frames": len(measured),
                     **timing_stats,
                 },
+                accuracy_summary=accuracy_summary if gt.is_available else None,
             )
             csv_path = event_logger.save_csv(str(log_dir))
             output_paths.extend([Path(json_path).resolve(), Path(csv_path).resolve()])

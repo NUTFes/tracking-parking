@@ -143,6 +143,7 @@ class EventLogger:
         condition_key: str = None,
         exp_key: str = None,
         timing_summary: Dict[str, Any] = None,
+        accuracy_summary: Dict[str, Any] = None,
     ) -> str:
         """
         JSONファイルに保存
@@ -154,6 +155,7 @@ class EventLogger:
             execution_id: 実行ごとのUUID
             condition_key: 条件のcanonical JSONから生成したhash
             exp_key: condition_keyの後方互換alias
+            accuracy_summary: GT比較結果（gt_in/gt_out/count_error等、GT無しはNone）
 
         Returns:
             str: 保存したファイルのパス
@@ -192,6 +194,8 @@ class EventLogger:
             data["condition_key"] = condition_key
         if exp_key is not None:
             data["exp_key"] = exp_key
+        if accuracy_summary is not None:
+            data["accuracy"] = accuracy_summary
 
         # JSONファイルに書き込み
         with open(filepath, 'w', encoding='utf-8') as f:
