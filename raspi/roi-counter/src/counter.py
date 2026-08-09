@@ -1,4 +1,4 @@
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from .tracker import VehicleState, VehicleTrack
 
@@ -11,7 +11,7 @@ class Counter:
         self.count_in = 0
         self.count_out = 0
 
-    def update(self, track_id: int, s: float) -> None:
+    def update(self, track_id: int, s: float, frame_idx: Optional[int] = None) -> None:
         if track_id not in self.tracks:
             self.tracks[track_id] = VehicleTrack(track_id=track_id)
 
@@ -28,12 +28,14 @@ class Counter:
             if s > self.s_high:
                 track.state = VehicleState.COUNTED
                 track.counted_as = "IN"
+                track.counted_frame = frame_idx
                 self.count_in += 1
 
         elif track.state == VehicleState.OUT_CANDIDATE:
             if s < self.s_low:
                 track.state = VehicleState.COUNTED
                 track.counted_as = "OUT"
+                track.counted_frame = frame_idx
                 self.count_out += 1
 
     def get_all_tracks(self) -> List[VehicleTrack]:

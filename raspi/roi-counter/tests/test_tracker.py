@@ -10,6 +10,7 @@ def test_initial_state():
     assert t.state == VehicleState.UNKNOWN
     assert t.s_history == []
     assert t.counted_as is None
+    assert t.counted_frame is None
 
 
 def test_s_history_independent():

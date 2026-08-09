@@ -16,3 +16,4 @@ class VehicleTrack:
     state: VehicleState = VehicleState.UNKNOWN
     s_history: List[float] = field(default_factory=list)
     counted_as: Optional[str] = None  # "IN" | "OUT"
+    counted_frame: Optional[int] = None  # COUNTED へ遷移したフレーム番号
