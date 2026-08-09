@@ -20,6 +20,7 @@ import pandas as pd
 from ultralytics import YOLO
 
 from src.counter import Counter
+from src.events import EVENT_COLUMNS, build_event_rows
 from src.roi import get_roi_y_range, is_in_roi
 from src.progress import calc_s
 from src.tracker_lifecycle import prepare_model_for_run
@@ -78,6 +79,8 @@ SWEEP_CONDITION_KEYS = (
     "s_low", "s_high", "git_sha", "git_dirty", "git_dirty_fingerprint",
     "python_version", "library_versions",
 )
+
+EVENT_CSV_COLUMNS = ("s_low", "s_high", "video", *EVENT_COLUMNS)
 
 
 def load_configs(gt_dir: str) -> list[dict]:
@@ -141,15 +144,23 @@ def build_detail_row(s_low: float, s_high: float, video_name: str, res: dict,
     return row
 
 
+def empty_run_result() -> dict:
+    """動画が開けない場合に返す、下流の全キーを満たす空の結果。"""
+    return {
+        "count_in": 0, "count_out": 0, "total_frames": 0,
+        "frame_times": [],
+        "timings": [],
+        "events": [],
+        "frame_width": 0, "frame_height": 0, "source_fps": 0.0,
+    }
+
+
 def run_once(model: YOLO, video_source: str, roi_points: list,
              s_low: float, s_high: float) -> dict:
     cap = cv2.VideoCapture(video_source)
     if not cap.isOpened():
         print(f"[ERROR] 動画を開けません: {video_source}")
-        return {"count_in": 0, "count_out": 0, "total_frames": 0,
-                "frame_times": [],
-                "timings": [],
-                "frame_width": 0, "frame_height": 0, "source_fps": 0.0}
+        return empty_run_result()
 
     fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
     w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -187,7 +198,7 @@ def run_once(model: YOLO, video_source: str, roi_points: list,
                     cx, cy = (x1 + x2) / 2, float(y2)
                     if not is_in_roi((cx, cy), roi_points):
                         continue
-                    counter.update(int(tid), calc_s(cy, y_min, y_max))
+                    counter.update(int(tid), calc_s(cy, y_min, y_max), frame_idx)
 
         timing_records.append(FrameTiming(
             frame_index=frame_idx,
@@ -202,12 +213,14 @@ def run_once(model: YOLO, video_source: str, roi_points: list,
 
     cap.release()
     frame_times = [timing.core_ms for timing in timing_records]
+    events = build_event_rows(counter.get_all_tracks(), float(fps), WARMUP_FRAMES)
     return {
         "count_in":      counter.count_in,
         "count_out":     counter.count_out,
         "total_frames":  frame_idx,
         "frame_times":   frame_times,
         "timings":       timing_records,
+        "events":        events,
         "frame_width":   w,
         "frame_height":  h,
         "source_fps":    float(fps),
@@ -230,6 +243,7 @@ def main() -> None:
     reproducibility = collect_reproducibility_info()
     detail_rows = []
     summary_rows = []
+    event_rows = []
 
     for s_low, s_high in param_list:
         errors = []
@@ -338,11 +352,15 @@ def main() -> None:
                 stats, USE_WANDB, logger.run_id, config["execution_id"],
                 config["condition_key"], config["exp_key"],
             ))
+            event_rows.extend(
+                {"s_low": s_low, "s_high": s_high, "video": Path(video).name, **row}
+                for row in res["events"]
+            )
             write_run_manifest(
                 out_dir / "manifests" / f"{config['execution_id']}.json",
                 config=config,
                 output_dir=out_dir,
-                output_paths=["results.csv", "mae_summary.csv"],
+                output_paths=["results.csv", "mae_summary.csv", "events.csv"],
                 wandb_run_id=logger.run_id,
             )
             print(f"IN={res['count_in']} OUT={res['count_out']} err={count_error} "
@@ -360,6 +378,9 @@ def main() -> None:
         # 逐次書き込み
         pd.DataFrame(detail_rows).to_csv(out_dir / "results.csv", index=False)
         pd.DataFrame(summary_rows).to_csv(out_dir / "mae_summary.csv", index=False)
+        pd.DataFrame(event_rows, columns=list(EVENT_CSV_COLUMNS)).to_csv(
+            out_dir / "events.csv", index=False
+        )
 
     print(f"出力: {out_dir}")
 

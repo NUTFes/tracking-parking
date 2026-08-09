@@ -71,3 +71,17 @@ def test_tracker_reset_method_does_not_change_condition_key():
 
     assert "tracker_reset_method" not in first
     assert build_condition_key(first) == build_condition_key(second)
+
+
+def test_empty_run_result_contains_all_downstream_keys():
+    result = mae.empty_run_result()
+    assert set(result) >= {
+        "count_in", "count_out", "total_frames", "frame_times", "timings",
+        "frame_width", "frame_height", "source_fps", "events",
+    }
+    assert result["events"] == []
+
+
+def test_event_csv_columns_prefix_sweep_identity():
+    assert mae.EVENT_CSV_COLUMNS[:3] == ("s_low", "s_high", "video")
+    assert mae.EVENT_CSV_COLUMNS[3:] == mae.EVENT_COLUMNS
