@@ -62,10 +62,17 @@ roi-counter/
 ```
 ├── result.json     # カウント結果・処理時間サマリー
 ├── vehicles.csv    # track_id ごとの s_history・状態
+├── events.csv      # カウント確定イベント列（track_id・方向・確定フレーム）
 ├── frames.csv      # フレームごとの処理時間
 ├── annotated.mp4   # 可視化済み動画（SAVE_VIDEO=true時）
 └── run_manifest.json # run識別子・再現情報・出力パス
 ```
+
+`events.csv` は `track_id, event_type, frame_index, timestamp_sec, is_warmup` を
+持つ。`event_type` は `IN`/`OUT`、`frame_index` はカウントが確定したフレーム番号、
+`timestamp_sec` はそのフレームの相対経過秒（fpsが不明な場合は空）。
+**warm-up中に確定したイベントも除外しない**（`is_warmup` 列で明示するのみ）。
+除外すると行数が `count_in + count_out` と一致しなくなるため。
 
 `frames.csv` は timing schema v2 に従い、`read_ms`、`inference_tracking_ms`、
 `counting_logic_ms`、`core_ms`、`output_ms`、`end_to_end_ms` を保存する。
@@ -148,8 +155,20 @@ s_low, s_high, count_in, count_out, gt_in, gt_out, count_error, elapsed_ms, mean
 ```
 ├── results.csv      # 動画 × パラメータごとの詳細
 ├── mae_summary.csv  # パラメータごとのMAEサマリー
+├── events.csv       # 全run分の確定イベントを集約（先頭に s_low, s_high, video 列）
 └── manifests/       # 動画 × パラメータrunごとのmanifest（execution_id.json）
 ```
+
+`events.csv` の列構成は `02_run_analysis.py` と同じ `track_id, event_type,
+frame_index, timestamp_sec, is_warmup` に、どのパラメータ・動画のrunかを示す
+`s_low, s_high, video` を先頭に付けたもの。組み合わせ数が多いため個別ファイルに
+せず単一の集約CSVにしている。
+
+> **将来のstale cleanup対応(#99)への注意**: `events.csv` は `Counter.tracks` から
+> `counted_frame` を持つトラックを抽出して生成する（`src/events.py`）。#99で
+> `COUNTED` 状態のトラックを削除する実装を入れる場合、削除対象から除外するか
+> `retired` リストへ退避して `get_all_tracks()` に含めること。さもないと
+> イベントが記録から消える。
 
 `results.csv`には`tracker_reset`、`tracker_reset_method`、`ultralytics_version`も
 記録する。`03_sweep_params.py`と同じ共通処理を使い、動画・閾値の各runを独立させる。
