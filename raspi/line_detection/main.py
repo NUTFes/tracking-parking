@@ -48,6 +48,12 @@ from common.run_identity import (
     collect_reproducibility_info,
     write_run_manifest,
 )
+from common.ground_truth import (
+    GroundTruth,
+    build_ground_truth_config,
+    build_ground_truth_summary,
+    load_ground_truth,
+)
 
 
 WEBCAM_FPS = 30.0
@@ -135,6 +141,7 @@ def process_video(
     use_wandb: bool = False,
     device_name: str = platform.node(),
     runtime: RuntimeSettings | None = None,
+    ground_truth: GroundTruth | None = None,
 ):
     """
     動画を処理
@@ -143,8 +150,10 @@ def process_video(
         video_path: 入力動画のパス
         config: 設定
         output_dir: 出力ディレクトリ
+        ground_truth: 正解台数(GT)。省略時は比較なし
     """
     runtime = runtime or RuntimeSettings.from_env()
+    gt = ground_truth or GroundTruth.absent()
 
     print("\n" + "=" * 60)
     print("2ライン検知システム")
@@ -261,6 +270,7 @@ def process_video(
         "timing_schema_version": TIMING_SCHEMA_VERSION,
         **exp_params,
         **reproducibility,
+        **build_ground_truth_config(gt),
     }
     run_config["comparison_key"] = build_comparison_key(run_config)
     condition = build_line_condition(run_config)
@@ -428,13 +438,23 @@ def process_video(
         measured = require_measured_timings(timing_records)
         timing_stats = compute_timing_stats(measured, float(fps))
         tracker_summary = tracker.get_summary()
+        accuracy_summary = build_ground_truth_summary(
+            tracker_summary["total_in"], tracker_summary["total_out"], gt
+        )
         wandb_logger.set_summaries({
             "count_in": tracker_summary["total_in"],
             "count_out": tracker_summary["total_out"],
             "total_frames": frame_id,
             "measured_frames": len(measured),
+            **accuracy_summary,
             **timing_stats,
         })
+        if gt.is_available:
+            print(
+                f"GT比較: count_error={accuracy_summary['count_error']} "
+                f"(in={accuracy_summary['count_error_in']}, "
+                f"out={accuracy_summary['count_error_out']})"
+            )
 
         print("\n処理完了!")
         log_dir = Path(output_dir) / "logs"
@@ -521,6 +541,11 @@ def main():
         default=None,
         help="比較対象デバイス名"
     )
+    parser.add_argument(
+        "--gt",
+        default=None,
+        help="正解台数JSONのパス(省略時は<動画名>_gt.jsonを自動探索)"
+    )
 
     args = parser.parse_args()
 
@@ -563,6 +588,9 @@ def main():
         if args.display:
             config.show_display = True
 
+        # GTを読み込み(--gt省略時は動画名から自動探索。無ければ比較なしで続行)
+        ground_truth = load_ground_truth(video_path, args.gt)
+
     except Exception as e:
         print(f"設定エラー: {e}")
         return 1
@@ -577,6 +605,7 @@ def main():
             use_wandb=args.wandb or runtime.use_wandb,
             device_name=args.device_name or os.getenv("EXP_DEVICE_NAME", platform.node()),
             runtime=runtime,
+            ground_truth=ground_truth,
         )
         return 0
     except KeyboardInterrupt:
