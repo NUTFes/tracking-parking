@@ -12,7 +12,7 @@ from ultralytics import YOLO
 sys.path.insert(0, os.path.dirname(__file__))
 
 from detection.config import Config
-from detection.line_crossing import get_vehicle_point, side_of_line
+from detection.line_crossing import get_vehicle_point, side_of_line, signed_distance
 
 
 def visualize(video_path: str, config: Config, output_path: str = None, start_frame: int = 0, end_frame: int = 300):
@@ -34,7 +34,7 @@ def visualize(video_path: str, config: Config, output_path: str = None, start_fr
     print(f"Line1: {config.line1.start} → {config.line1.end}")
     print(f"Line2: {config.line2.start} → {config.line2.end}")
     print(f"駐車場基準点: {config.parking_ref_point}")
-    print(f"MARGIN: {config.margin}")
+    print(f"MARGIN_PX: {config.margin_px}, ENDPOINT_MARGIN_PX: {config.endpoint_margin_px}")
     print("=" * 80 + "\n")
 
     # YOLOモデルをロード
@@ -149,13 +149,13 @@ def visualize(video_path: str, config: Config, output_path: str = None, start_fr
                     -1
                 )
 
-                # Line1との外積を計算
-                side1 = side_of_line(vehicle_point, config.line1.start, config.line1.end)
-                side2 = side_of_line(vehicle_point, config.line2.start, config.line2.end)
+                # Line1/Line2からの符号付き距離(px)を計算
+                side1 = signed_distance(vehicle_point, config.line1)
+                side2 = signed_distance(vehicle_point, config.line2)
 
-                # 外積値とMARGIN比較を表示
-                status1 = "OK" if abs(side1) >= config.margin else f"小({abs(side1):.0f}<{config.margin})"
-                status2 = "OK" if abs(side2) >= config.margin else f"小({abs(side2):.0f}<{config.margin})"
+                # 符号付き距離とMARGIN_PX比較を表示
+                status1 = "OK" if abs(side1) >= config.margin_px else f"小({abs(side1):.1f}<{config.margin_px})"
+                status2 = "OK" if abs(side2) >= config.margin_px else f"小({abs(side2):.1f}<{config.margin_px})"
 
                 # 駐車場側かどうか
                 is_parking_side1 = "駐車場側" if side1 * parking_side_line1 > 0 else "入口側"
@@ -164,8 +164,8 @@ def visualize(video_path: str, config: Config, output_path: str = None, start_fr
                 # 情報を表示
                 info_text = [
                     f"ID:{track_id}",
-                    f"L1:{side1:.0f} [{status1}] {is_parking_side1}",
-                    f"L2:{side2:.0f} [{status2}] {is_parking_side2}"
+                    f"L1:{side1:.1f} [{status1}] {is_parking_side1}",
+                    f"L2:{side2:.1f} [{status2}] {is_parking_side2}"
                 ]
 
                 y_offset = int(vehicle_point[1]) - 20

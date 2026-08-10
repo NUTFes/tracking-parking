@@ -257,7 +257,8 @@ PARKING_REF_X={self.points[4][0]}
 PARKING_REF_Y={self.points[4][1]}
 
 # 検知パラメータ
-MARGIN=1000.0
+MARGIN_PX=0.0
+ENDPOINT_MARGIN_PX=0.0
 MAX_FRAME_GAP=90           # 3秒@30fps
 CLEANUP_THRESHOLD=150      # 5秒@30fps
 

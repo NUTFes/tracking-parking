@@ -282,7 +282,8 @@ CONFIDENCE_THRESHOLD=0.3  # 検知信頼度閾値(0.0-1.0)
 ### 検知パラメータ
 
 ```bash
-MARGIN=1000.0              # ライン交差判定のマージン
+MARGIN_PX=0.0              # 判定保留帯の半幅(px)。3cで正式決定
+ENDPOINT_MARGIN_PX=0.0     # 有限線分判定の端点許容量(px)
 MAX_FRAME_GAP=90          # Line1とLine2の最大フレーム差(3秒@30fps)
 CLEANUP_THRESHOLD=150      # 古い追跡をクリーンアップ(5秒@30fps)
 ```
@@ -351,7 +352,7 @@ IF Line2のみ交差(Line1交差なし):
 
 **考えられる原因:**
 1. ライン位置が適切でない → `setup_lines.py`で再設定
-2. `MARGIN`が大きすぎる/小さすぎる → `.env`で調整
+2. `MARGIN_PX`が大きすぎる/小さすぎる → `.env`で調整(px単位)
 3. `MAX_FRAME_GAP`が適切でない → 車両の通過速度に合わせて調整
 
 ## 参考

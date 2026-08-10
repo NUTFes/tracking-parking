@@ -57,6 +57,7 @@ from common.ground_truth import (
 
 
 WEBCAM_FPS = 30.0
+CROSSING_METHOD = "hysteresis_v1"  # W&B上でPre/Post-3bのrunを区別する固定タグ(可変設定ではない)
 
 
 @dataclass(frozen=True)
@@ -101,7 +102,9 @@ LINE_CONDITION_KEYS = (
     "gt_out",
     "vehicle_classes",
     "method",
-    "margin",
+    "margin_px",
+    "endpoint_margin_px",
+    "crossing_method",
     "max_frame_gap",
     "cleanup_threshold",
     "tracker_reset",
@@ -199,9 +202,10 @@ def process_video(
         line1=config.line1,
         line2=config.line2,
         parking_ref_point=config.parking_ref_point,
-        margin=config.margin
+        margin_px=config.margin_px,
+        endpoint_margin_px=config.endpoint_margin_px
     )
-    print(f"✓ ライン検知器初期化: margin={config.margin}")
+    print(f"✓ ライン検知器初期化: margin_px={config.margin_px}, endpoint_margin_px={config.endpoint_margin_px}")
 
     # アノテーターを初期化
     annotator = VideoAnnotator(
@@ -235,8 +239,10 @@ def process_video(
     dataset = Path(str(video_path)).stem if isinstance(video_path, str) else f"camera_{video_path}"
     exp_params = {
         "cleanup_threshold": config.cleanup_threshold,
-        "margin": config.margin,
+        "margin_px": config.margin_px,
+        "endpoint_margin_px": config.endpoint_margin_px,
         "max_frame_gap": config.max_frame_gap,
+        "crossing_method": CROSSING_METHOD,
     }
     reproducibility = collect_reproducibility_info()
     run_config = {
@@ -339,14 +345,12 @@ def process_video(
                     for track_id, bbox in detections:
                         vehicle_point = get_vehicle_point(bbox)
                         state = tracker.update(track_id, vehicle_point, frame_id)
-                        if state.prev_point is None:
-                            continue
 
-                        line1_dir = detector.detect_line1_crossing(
-                            state.prev_point, state.curr_point
+                        line1_dir = detector.update_line1_crossing(
+                            state.line1_transition, state.curr_point
                         )
-                        line2_dir = detector.detect_line2_crossing(
-                            state.prev_point, state.curr_point
+                        line2_dir = detector.update_line2_crossing(
+                            state.line2_transition, state.curr_point
                         )
                         if line1_dir and not state.counted:
                             state.record_line1_crossing(line1_dir, frame_id)

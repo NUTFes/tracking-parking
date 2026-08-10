@@ -39,7 +39,8 @@ class Config:
     parking_ref_point: Tuple[float, float]  # 駐車場基準点
 
     # 検知パラメータ
-    margin: float  # ライン交差判定のマージン
+    margin_px: float  # 判定保留帯の半幅(px)
+    endpoint_margin_px: float  # 有限線分判定における端点の許容量(px)
     max_frame_gap: int  # Line1とLine2の最大フレーム差
     cleanup_threshold: int  # 古い追跡をクリーンアップするフレーム数
     iou_threshold: float  # トラッキングのIOU閾値
@@ -116,7 +117,16 @@ class Config:
         )
 
         # 検知パラメータ
-        margin = float(os.getenv("MARGIN", "1000.0"))
+        if os.getenv("MARGIN") is not None and os.getenv("MARGIN_PX") is None:
+            raise ValueError(
+                "MARGIN は廃止されました。MARGIN_PX(単位: px)へ移行してください。\n"
+                "  旧: MARGIN=10.0 は外積値(距離×ライン長)との比較でした。\n"
+                "  新: MARGIN_PX は signed_distance との比較で、単位が px そのものです。\n"
+                "  数値をそのまま引き継ぐことはできません(ラインごとに換算係数が異なるため)。\n"
+                "  .env の MARGIN 行を削除し、MARGIN_PX と ENDPOINT_MARGIN_PX を追加してください。"
+            )
+        margin_px = float(os.getenv("MARGIN_PX", "0.0"))
+        endpoint_margin_px = float(os.getenv("ENDPOINT_MARGIN_PX", "0.0"))
         max_frame_gap = int(os.getenv("MAX_FRAME_GAP", "90"))
         cleanup_threshold = int(os.getenv("CLEANUP_THRESHOLD", "150"))
         iou_threshold = float(os.getenv("IOU_THRESHOLD", "0.3"))
@@ -137,7 +147,8 @@ class Config:
             line1=line1,
             line2=line2,
             parking_ref_point=parking_ref_point,
-            margin=margin,
+            margin_px=margin_px,
+            endpoint_margin_px=endpoint_margin_px,
             max_frame_gap=max_frame_gap,
             cleanup_threshold=cleanup_threshold,
             iou_threshold=iou_threshold,
@@ -166,8 +177,11 @@ class Config:
         if self.confidence_threshold < 0 or self.confidence_threshold > 1:
             errors.append(f"confidence_thresholdは0-1の範囲で設定してください: {self.confidence_threshold}")
 
-        if self.margin < 0:
-            errors.append(f"marginは正の値である必要があります: {self.margin}")
+        if self.margin_px < 0:
+            errors.append(f"margin_pxは0以上の値である必要があります: {self.margin_px}")
+
+        if self.endpoint_margin_px < 0:
+            errors.append(f"endpoint_margin_pxは0以上の値である必要があります: {self.endpoint_margin_px}")
 
         if self.max_frame_gap < 0:
             errors.append(f"max_frame_gapは正の値である必要があります: {self.max_frame_gap}")

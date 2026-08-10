@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from typing import Dict, Optional, Tuple, List
 import time
 
+from detection.line_crossing import LineTransitionState
+
 
 @dataclass
 class VehicleState:
@@ -15,6 +17,10 @@ class VehicleState:
     track_id: int
     prev_point: Optional[Tuple[float, float]] = None
     curr_point: Optional[Tuple[float, float]] = None
+
+    # ヒステリシス方式によるライン交差判定の状態(track×ラインごと)
+    line1_transition: LineTransitionState = field(default_factory=LineTransitionState)
+    line2_transition: LineTransitionState = field(default_factory=LineTransitionState)
 
     # Line1状態(主判定ライン)
     line1_direction: Optional[str] = None  # "IN" or "OUT"
