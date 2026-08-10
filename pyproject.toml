@@ -21,3 +21,8 @@ dependencies = [
     "lap>=0.5.13",
     "wandb>=0.28.0",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
