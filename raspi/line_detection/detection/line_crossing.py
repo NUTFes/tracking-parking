@@ -157,7 +157,7 @@ class LineCrossingDetector:
                  line1: Line,
                  line2: Line,
                  parking_ref_point: Tuple[float, float],
-                 margin_px: float = 1000.0,
+                 margin_px: float = 5.0,
                  endpoint_margin_px: float = 0.0):
         """
         Args:

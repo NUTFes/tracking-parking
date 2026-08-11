@@ -282,7 +282,7 @@ CONFIDENCE_THRESHOLD=0.3  # 検知信頼度閾値(0.0-1.0)
 ### 検知パラメータ
 
 ```bash
-MARGIN_PX=0.0              # 判定保留帯の半幅(px)。3cで正式決定
+MARGIN_PX=5.0              # 判定保留帯の半幅(px)。3cスイープ採用値
 ENDPOINT_MARGIN_PX=0.0     # 有限線分判定の端点許容量(px)
 MAX_FRAME_GAP=90          # Line1とLine2の最大フレーム差(3秒@30fps)
 CLEANUP_THRESHOLD=150      # 古い追跡をクリーンアップ(5秒@30fps)

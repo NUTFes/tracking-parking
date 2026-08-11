@@ -125,7 +125,7 @@ class Config:
                 "  数値をそのまま引き継ぐことはできません(ラインごとに換算係数が異なるため)。\n"
                 "  .env の MARGIN 行を削除し、MARGIN_PX と ENDPOINT_MARGIN_PX を追加してください。"
             )
-        margin_px = float(os.getenv("MARGIN_PX", "0.0"))
+        margin_px = float(os.getenv("MARGIN_PX", "5.0"))
         endpoint_margin_px = float(os.getenv("ENDPOINT_MARGIN_PX", "0.0"))
         max_frame_gap = int(os.getenv("MAX_FRAME_GAP", "90"))
         cleanup_threshold = int(os.getenv("CLEANUP_THRESHOLD", "150"))
