@@ -366,6 +366,7 @@ def process_video(
                                 "confidence": state.confidence,
                                 "line2_crossed": state.line2_direction is not None,
                             })
+                    confidence_updates = tracker.resolve_pending_confidences(frame_id)
                     tracker.cleanup_stale_tracks(frame_id)
 
                 core_ms = inference_timer.elapsed_ms + counting_timer.elapsed_ms
@@ -373,6 +374,20 @@ def process_video(
                 with elapsed_timer() as output_timer:
                     for event in pending_events:
                         event_logger.record_event(**event)
+                    for update in confidence_updates:
+                        if not event_logger.update_confidence(
+                            update.track_id,
+                            update.confidence,
+                            line2_crossed=update.line2_crossed,
+                        ):
+                            raise RuntimeError(
+                                "confidence更新対象のイベントが見つかりません: "
+                                f"track_id={update.track_id}"
+                            )
+                        for event in pending_events:
+                            if event["track_id"] == update.track_id:
+                                event["confidence"] = update.confidence
+                                event["line2_crossed"] = update.line2_crossed
                     if config.save_video or config.show_display:
                         annotated_frame = annotator.annotate_frame(
                             frame, tracker, frame_id, core_ms
@@ -442,9 +457,27 @@ def process_video(
                 print("\nユーザーによる中断")
                 break
 
+        final_confidence_updates = tracker.finalize_pending_confidences()
+        for update in final_confidence_updates:
+            if not event_logger.update_confidence(
+                update.track_id,
+                update.confidence,
+                line2_crossed=update.line2_crossed,
+            ):
+                raise RuntimeError(
+                    "終了時confidence更新対象のイベントが見つかりません: "
+                    f"track_id={update.track_id}"
+                )
+        orphan_pending = event_logger.finalize_pending_confidences()
+        if orphan_pending:
+            raise RuntimeError(
+                f"trackerに存在しないpendingイベントが残っています: {orphan_pending}件"
+            )
+
         measured = require_measured_timings(timing_records)
         timing_stats = compute_timing_stats(measured, float(fps))
         tracker_summary = tracker.get_summary()
+        event_logger.validate_finalized(tracker_summary)
         accuracy_summary = build_ground_truth_summary(
             tracker_summary["total_in"], tracker_summary["total_out"], gt
         )
@@ -453,6 +486,8 @@ def process_video(
             "count_out": tracker_summary["total_out"],
             "total_frames": frame_id,
             "measured_frames": len(measured),
+            "high_confidence_events": tracker_summary["high_confidence_events"],
+            "normal_confidence_events": tracker_summary["normal_confidence_events"],
             **accuracy_summary,
             **timing_stats,
         })

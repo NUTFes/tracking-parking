@@ -4,10 +4,23 @@
 """
 
 from dataclasses import dataclass, field
-from typing import Dict, Optional, Tuple, List
+from typing import Dict, Literal, Optional, Tuple, List
 import time
 
 from detection.line_crossing import LineTransitionState
+
+
+Confidence = Literal["pending", "high", "normal"]
+FinalConfidence = Literal["high", "normal"]
+
+
+@dataclass(frozen=True)
+class ConfidenceUpdate:
+    """イベントログへ反映する確定済みconfidence。"""
+
+    track_id: int
+    confidence: FinalConfidence
+    line2_crossed: bool
 
 
 @dataclass
@@ -35,7 +48,7 @@ class VehicleState:
     # イベント追跡
     passed_order: List[str] = field(default_factory=list)  # ["line1", "line2"] など
     counted: bool = False
-    confidence: Optional[str] = None  # "high" or "normal"
+    confidence: Optional[Confidence] = None
 
     # 更新追跡
     last_update_frame: int = 0
@@ -78,45 +91,55 @@ class VehicleState:
         self.line2_timestamp = time.time()
         self.passed_order.append("line2")
 
-    def calculate_confidence(self, max_frame_gap: int) -> Optional[str]:
+    def resolve_confidence(
+        self,
+        current_frame: int,
+        max_frame_gap: int,
+    ) -> Optional[Confidence]:
         """
-        信頼度を計算(ハイブリッド方式)
+        pendingの信頼度を、現在までのライン通過履歴から解決する。
 
         Args:
+            current_frame: 現在のフレーム番号
             max_frame_gap: Line1とLine2の最大フレーム差
 
         Returns:
-            Optional[str]: "high" or "normal" or None
+            Optional[Confidence]: "pending"、"high"、"normal"、またはNone
         """
-        # Line1を交差していない場合は信頼度なし
-        if not self.line1_frame:
+        if not self.counted or self.line1_frame is None:
             return None
 
-        # Line2を交差していない場合はnormal
-        if not self.line2_direction:
-            return "normal"
+        if self.confidence in ("high", "normal"):
+            return self.confidence
 
-        # Line1とLine2の方向が一致しているかチェック
-        if self.line1_direction != self.line2_direction:
-            return "normal"
+        if self.line1_direction == "IN" and self.line2_direction is None:
+            if current_frame - self.line1_frame > max_frame_gap:
+                self.confidence = "normal"
+            else:
+                self.confidence = "pending"
+            return self.confidence
 
-        # フレーム差をチェック
-        frame_diff = abs(self.line1_frame - self.line2_frame)
-        if frame_diff > max_frame_gap:
-            return "normal"
+        # OUTでLine2が未通過なら、期待順序 line2→line1 はすでに成立しない。
+        if self.line2_direction is None or self.line2_frame is None:
+            self.confidence = "normal"
+            return self.confidence
 
-        # 通過順序をチェック
         if self.line1_direction == "IN":
-            # 入庫の場合: line1 → line2 が正しい順序
             expected_order = ["line1", "line2"]
-        else:  # OUT
-            # 出庫の場合: line2 → line1 が正しい順序
+        elif self.line1_direction == "OUT":
             expected_order = ["line2", "line1"]
-
-        if self.passed_order == expected_order:
-            return "high"
         else:
-            return "normal"
+            self.confidence = "normal"
+            return self.confidence
+
+        frame_diff = abs(self.line1_frame - self.line2_frame)
+        valid_pair = (
+            self.line1_direction == self.line2_direction
+            and frame_diff <= max_frame_gap
+            and self.passed_order == expected_order
+        )
+        self.confidence = "high" if valid_pair else "normal"
+        return self.confidence
 
 
 class VehicleTracker:
@@ -207,11 +230,9 @@ class VehicleTracker:
         if not state:
             return None
 
-        # 信頼度を計算
-        state.confidence = state.calculate_confidence(self.max_frame_gap)
-
         # カウント済みフラグを設定
         state.counted = True
+        state.confidence = "pending"
 
         # 統計情報を更新
         if state.line1_direction == "IN":
@@ -219,12 +240,50 @@ class VehicleTracker:
         elif state.line1_direction == "OUT":
             self.total_out += 1
 
-        if state.confidence == "high":
-            self.high_confidence_count += 1
-        elif state.confidence == "normal":
-            self.normal_confidence_count += 1
-
         return state.line1_direction
+
+    def resolve_pending_confidences(
+        self,
+        current_frame: int,
+    ) -> List[ConfidenceUpdate]:
+        """全trackのpending confidenceを評価し、新たな確定結果を返す。"""
+        updates = []
+        for state in self.states.values():
+            if state.confidence != "pending":
+                continue
+
+            resolved = state.resolve_confidence(current_frame, self.max_frame_gap)
+            if resolved in ("high", "normal"):
+                self._record_confidence_resolution(resolved)
+                updates.append(ConfidenceUpdate(
+                    track_id=state.track_id,
+                    confidence=resolved,
+                    line2_crossed=state.line2_direction is not None,
+                ))
+        return updates
+
+    def finalize_pending_confidences(self) -> List[ConfidenceUpdate]:
+        """run終了時に残ったpending confidenceをnormalへ確定する。"""
+        updates = []
+        for state in self.states.values():
+            if state.confidence != "pending":
+                continue
+
+            state.confidence = "normal"
+            self._record_confidence_resolution("normal")
+            updates.append(ConfidenceUpdate(
+                track_id=state.track_id,
+                confidence="normal",
+                line2_crossed=state.line2_direction is not None,
+            ))
+        return updates
+
+    def _record_confidence_resolution(self, confidence: FinalConfidence):
+        """確定時に一度だけconfidence別件数を加算する。"""
+        if confidence == "high":
+            self.high_confidence_count += 1
+        else:
+            self.normal_confidence_count += 1
 
     def cleanup_stale_tracks(self, current_frame: int):
         """
@@ -238,7 +297,10 @@ class VehicleTracker:
         for track_id, state in self.states.items():
             frames_since_update = current_frame - state.last_update_frame
 
-            if frames_since_update > self.cleanup_threshold:
+            if (
+                frames_since_update > self.cleanup_threshold
+                and state.confidence != "pending"
+            ):
                 track_ids_to_remove.append(track_id)
 
         for track_id in track_ids_to_remove:

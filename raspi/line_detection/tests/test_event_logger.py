@@ -79,3 +79,39 @@ def test_save_json_omits_accuracy_block_when_absent(tmp_path):
     data = json.loads(Path(path).read_text(encoding="utf-8"))
 
     assert "accuracy" not in data
+
+
+def test_update_confidence_updates_event_and_line2_crossing():
+    logger = EventLogger(video_path="test.mp4")
+    logger.record_event(
+        track_id=7,
+        event_type="IN",
+        frame_id=10,
+        fps=30.0,
+        confidence="pending",
+        line2_crossed=False,
+    )
+
+    assert logger.update_confidence(7, "high", line2_crossed=True) is True
+    assert logger.events[0].confidence == "high"
+    assert logger.events[0].line2_crossed is True
+
+
+def test_update_confidence_returns_false_for_unknown_track():
+    logger = EventLogger(video_path="test.mp4")
+    assert logger.update_confidence(999, "normal") is False
+
+
+def test_finalize_pending_confidences_and_validate_summary():
+    logger = EventLogger(video_path="test.mp4")
+    logger.record_event(1, "IN", 1, 30.0, "pending", False)
+    logger.record_event(2, "OUT", 2, 30.0, "high", True)
+
+    assert logger.finalize_pending_confidences() == 1
+    summary = {
+        "total_in": 1,
+        "total_out": 1,
+        "high_confidence_events": 1,
+        "normal_confidence_events": 1,
+    }
+    logger.validate_finalized(summary)

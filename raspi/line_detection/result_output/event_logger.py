@@ -7,7 +7,7 @@ import json
 import csv
 import os
 from datetime import datetime
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 
 class Event:
@@ -92,6 +92,60 @@ class EventLogger:
         )
 
         self.events.append(event)
+
+    def update_confidence(
+        self,
+        track_id: int,
+        confidence: str,
+        line2_crossed: Optional[bool] = None,
+    ) -> bool:
+        """track_idで既存イベントを検索し、後追いの確定結果を反映する。"""
+        matched = [event for event in self.events if event.track_id == track_id]
+        if not matched:
+            return False
+        if len(matched) > 1:
+            raise ValueError(f"同一track_idのイベントが重複しています: {track_id}")
+
+        event = matched[0]
+        event.confidence = confidence
+        if line2_crossed is not None:
+            event.line2_crossed = line2_crossed
+        return True
+
+    def finalize_pending_confidences(self) -> int:
+        """保存前に残ったpendingイベントをnormalへ確定する。"""
+        finalized = 0
+        for event in self.events:
+            if event.confidence == "pending":
+                event.confidence = "normal"
+                finalized += 1
+        return finalized
+
+    def validate_finalized(self, tracker_summary: Dict[str, Any]) -> None:
+        """イベントとtracker集計の整合性を検証する。"""
+        pending = [event.track_id for event in self.events if event.confidence == "pending"]
+        if pending:
+            raise ValueError(f"pendingイベントが保存直前まで残っています: {pending}")
+
+        expected_events = tracker_summary["total_in"] + tracker_summary["total_out"]
+        if len(self.events) != expected_events:
+            raise ValueError(
+                "イベント数とカウント数が一致しません: "
+                f"events={len(self.events)}, counts={expected_events}"
+            )
+
+        high = sum(event.confidence == "high" for event in self.events)
+        normal = sum(event.confidence == "normal" for event in self.events)
+        if (high, normal) != (
+            tracker_summary["high_confidence_events"],
+            tracker_summary["normal_confidence_events"],
+        ):
+            raise ValueError(
+                "confidence集計とイベント列が一致しません: "
+                f"events=({high}, {normal}), "
+                f"summary=({tracker_summary['high_confidence_events']}, "
+                f"{tracker_summary['normal_confidence_events']})"
+            )
 
     def record_frame_time(self, processing_time_ms: float):
         """

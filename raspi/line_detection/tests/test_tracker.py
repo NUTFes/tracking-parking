@@ -42,6 +42,7 @@ def process_frame(tracker, detector, track_id, point, frame_id):
         state.record_line2_crossing(line2_dir, frame_id)
     if tracker.should_count_event(state):
         tracker.mark_as_counted(track_id)
+    tracker.resolve_pending_confidences(frame_id)
 
     return state
 
@@ -169,3 +170,129 @@ def test_large_frame_gap_single_jump_across_line1_still_counts():
     process_frame(tracker, detector, track_id=1, point=(50, 18), frame_id=50)
 
     assert tracker.total_in == 1
+
+
+def test_in_line1_then_line2_resolves_high_after_line2():
+    tracker, detector = make_tracker_and_detector(margin_px=5)
+
+    points = [
+        (50, -12), (50, -3), (50, 1), (50, 4), (50, 11),
+        (50, 44), (50, 47), (50, 51), (50, 54), (50, 61),
+    ]
+    states = []
+    for frame_id, point in enumerate(points):
+        states.append(process_frame(tracker, detector, 1, point, frame_id))
+
+    state = states[-1]
+    assert state.confidence == "high"
+    assert tracker.total_in == 1
+    assert tracker.high_confidence_count == 1
+    assert tracker.normal_confidence_count == 0
+
+
+def test_out_line2_then_line1_resolves_high_on_line1_frame():
+    tracker, detector = make_tracker_and_detector(margin_px=5)
+
+    points = [(50, 61), (50, 39), (50, 11), (50, -11)]
+    for frame_id, point in enumerate(points):
+        state = process_frame(tracker, detector, 1, point, frame_id)
+
+    assert state.line2_direction == "OUT"
+    assert state.line1_direction == "OUT"
+    assert state.passed_order == ["line2", "line1"]
+    assert state.confidence == "high"
+    assert tracker.total_out == 1
+    assert tracker.high_confidence_count == 1
+
+
+def test_pending_in_resolves_normal_after_gap_exceeds_boundary():
+    tracker, _ = make_tracker_and_detector(max_frame_gap=3)
+    state = tracker.update(1, (50, 10), frame_id=0)
+    state.record_line1_crossing("IN", frame_id=0)
+    tracker.mark_as_counted(1)
+
+    assert tracker.resolve_pending_confidences(3) == []
+    assert state.confidence == "pending"
+
+    updates = tracker.resolve_pending_confidences(4)
+    assert [(u.track_id, u.confidence) for u in updates] == [(1, "normal")]
+    assert tracker.normal_confidence_count == 1
+
+
+def test_reverse_order_in_is_normal():
+    tracker, _ = make_tracker_and_detector()
+    state = tracker.update(1, (50, 10), frame_id=0)
+    state.record_line2_crossing("IN", frame_id=0)
+    state.record_line1_crossing("IN", frame_id=1)
+    tracker.mark_as_counted(1)
+
+    updates = tracker.resolve_pending_confidences(1)
+    assert [(u.track_id, u.confidence) for u in updates] == [(1, "normal")]
+
+
+def test_direction_mismatch_is_normal():
+    tracker, _ = make_tracker_and_detector()
+    state = tracker.update(1, (50, 10), frame_id=0)
+    state.record_line1_crossing("IN", frame_id=0)
+    state.record_line2_crossing("OUT", frame_id=1)
+    tracker.mark_as_counted(1)
+
+    assert state.resolve_confidence(1, 90) == "normal"
+
+
+def test_duplicate_line2_before_line1_is_normal_for_out():
+    tracker, _ = make_tracker_and_detector()
+    state = tracker.update(1, (50, 10), frame_id=0)
+    state.record_line2_crossing("OUT", frame_id=0)
+    state.record_line2_crossing("OUT", frame_id=1)
+    state.record_line1_crossing("OUT", frame_id=2)
+    tracker.mark_as_counted(1)
+
+    assert state.resolve_confidence(2, 90) == "normal"
+
+
+def test_correct_pair_beyond_gap_is_normal():
+    tracker, _ = make_tracker_and_detector(max_frame_gap=3)
+    state = tracker.update(1, (50, 10), frame_id=0)
+    state.record_line1_crossing("IN", frame_id=0)
+    state.record_line2_crossing("IN", frame_id=4)
+    tracker.mark_as_counted(1)
+
+    assert state.resolve_confidence(4, 3) == "normal"
+
+
+def test_pending_state_survives_cleanup_until_confidence_is_resolved():
+    tracker, _ = make_tracker_and_detector(max_frame_gap=90, cleanup_threshold=10)
+    state = tracker.update(1, (50, 10), frame_id=0)
+    state.record_line1_crossing("IN", frame_id=0)
+    tracker.mark_as_counted(1)
+
+    tracker.cleanup_stale_tracks(11)
+    assert tracker.get_state(1) is state
+
+    updates = tracker.resolve_pending_confidences(91)
+    assert updates[0].confidence == "normal"
+    tracker.cleanup_stale_tracks(91)
+    assert tracker.get_state(1) is None
+
+
+def test_finalize_pending_confidences_marks_remaining_events_normal():
+    tracker, _ = make_tracker_and_detector()
+    state = tracker.update(1, (50, 10), frame_id=0)
+    state.record_line1_crossing("IN", frame_id=0)
+    tracker.mark_as_counted(1)
+
+    updates = tracker.finalize_pending_confidences()
+    assert [(u.track_id, u.confidence) for u in updates] == [(1, "normal")]
+    assert state.confidence == "normal"
+    assert tracker.normal_confidence_count == 1
+
+
+def test_frame_zero_line1_event_starts_pending_confidence():
+    tracker, _ = make_tracker_and_detector()
+    state = tracker.update(1, (50, 20), frame_id=0)
+    state.record_line1_crossing("IN", frame_id=0)
+
+    assert tracker.should_count_event(state) is True
+    assert tracker.mark_as_counted(1) == "IN"
+    assert state.confidence == "pending"
