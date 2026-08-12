@@ -8,7 +8,8 @@ ROI内を通過する車両の進行度 `s` を用いて入庫・出庫を判定
 roi-counter/
 ├── src/                    # コアモジュール
 │   ├── roi.py              # ROI判定・y範囲取得
-│   ├── progress.py         # 進行度 s の計算
+│   ├── progress.py         # 進行度 s の計算方式とレジストリ
+│   ├── progress_diagnostics.py # s_max診断集計
 │   ├── tracker.py          # 車両状態データクラス
 │   ├── tracker_lifecycle.py # run間のYOLO tracker状態初期化
 │   ├── counter.py          # 状態機械・入出庫カウント
@@ -36,7 +37,12 @@ roi-counter/
 | `CLEANUP_THRESHOLD` | 未更新trackを削除またはarchiveへ移すまでのフレーム数（既定150） |
 | `MAX_CANDIDATE_AGE` | 候補状態を維持する最大フレーム数（既定300） |
 | `S_HISTORY_LIMIT` | trackごとに保持する`s_history`の最大件数（既定300、0は無制限） |
+| `PROGRESS_METHOD` | 進行度計算方式（`y_normalized`または`edge_distance`、既定`y_normalized`） |
 | `VEHICLE_CLASSES` | 検出対象クラス（COCO: `2`=car, `7`=truck） |
+
+`ROI_POINTS`は「奥側左、奥側右、入口側右、入口側左」の順序で指定する。
+`y_normalized`は従来どおりROI全体のy範囲で正規化し、`edge_distance`は入口辺から奥辺への
+透視変換距離で正規化する。既定方式は互換性のため`y_normalized`である。
 
 ## scripts/ 各スクリプトの用途と入力
 
@@ -82,6 +88,9 @@ roi-counter/
 `core_ms_p95` を方式比較、`end_to_end_ms` と `deadline_miss_rate` を実機の
 リアルタイム判定に使う。先頭 `WARMUP_FRAMES`（既定30）は処理自体には含めるが、
 速度 summary から除外する。
+
+`PROGRESS_METHOD=edge_distance`を指定すると、台形や回転したROIでも入口辺から奥辺への
+進行度を計算できる。方式名はW&B config、manifest、`result.json`の`progress_method`に記録する。
 
 主な速度比較用環境変数:
 
@@ -173,7 +182,8 @@ s_low, s_high, count_in, count_out, gt_in, gt_out, count_error, elapsed_ms, mean
 ├── results.csv      # 動画 × パラメータごとの詳細
 ├── mae_summary.csv  # パラメータごとのMAEサマリー
 ├── events.csv       # 全run分の確定イベントを集約（先頭に s_low, s_high, video 列）
-└── manifests/       # 動画 × パラメータrunごとのmanifest（execution_id.json）
+├── manifests/       # 動画 × パラメータrunごとのmanifest（execution_id.json）
+└── diagnostics/     # IN_CANDIDATE停滞trackのJSON/CSV（execution_id単位）
 ```
 
 `events.csv` の列構成は `02_run_analysis.py` と同じ `track_id, event_type,
@@ -194,6 +204,11 @@ track IDが再利用された場合も、過去のarchiveイベントと新し�
 tracker初期化処理はUltralyticsの内部APIに依存するため、依存バージョンは
 `8.4.72`に固定している。バージョン更新時は`test_tracker_lifecycle.py`を含む
 ROI counterのテストを実行すること。
+
+`diagnostics/{execution_id}.json`には総track instance数、COUNTED数、
+`IN_CANDIDATE`停滞数、停滞trackの`s_max`要約値、`s_high`を0.75/0.70/0.65/0.60へ
+下げた場合の机上確定数を保存する。
+`diagnostics/{execution_id}.csv`には停滞trackごとのfirst/last seen、s要約値、サンプル数を保存する。
 
 ---
 

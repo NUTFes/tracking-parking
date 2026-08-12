@@ -14,7 +14,7 @@ from ultralytics import YOLO
 from src.counter import Counter
 from src.events import EVENT_COLUMNS, build_event_rows
 from src.roi import get_roi_y_range, is_in_roi
-from src.progress import calc_s
+from src.progress import get_progress_fn
 from src.visualizer import draw_band_lines, draw_bbox_with_info, draw_counts, draw_roi
 
 from common.wandb_logger import (
@@ -77,6 +77,7 @@ YOLO_TRACKER = os.getenv("YOLO_TRACKER", "botsort.yaml")
 WARMUP_FRAMES = validate_warmup_frames(os.getenv("WARMUP_FRAMES", DEFAULT_WARMUP_FRAMES))
 SAVE_VIDEO = os.getenv("SAVE_VIDEO", "true").lower() == "true"
 SHOW_DISPLAY = os.getenv("SHOW_DISPLAY", "true").lower() == "true"
+PROGRESS_METHOD = os.getenv("PROGRESS_METHOD", "y_normalized")
 # ────────────────────────────────────────────────────────────────────────────
 
 WEBCAM_FPS = 30.0
@@ -99,6 +100,7 @@ def build_state_metrics(counter: Counter, active_detections: int) -> dict[str, i
 
 
 def main() -> None:
+    progress_fn = get_progress_fn(PROGRESS_METHOD)
     out_dir = resolve_output_dir(VIDEO_SOURCE, EXP_NAME)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -128,7 +130,7 @@ def main() -> None:
     # ── W&B 初期化 ──────────────────────────────────────────────────────────
     input_type = "file" if isinstance(VIDEO_SOURCE, str) else "camera"
     dataset = Path(str(VIDEO_SOURCE)).stem if isinstance(VIDEO_SOURCE, str) else "webcam"
-    exp_params = {"s_low": S_LOW, "s_high": S_HIGH}
+    exp_params = {"s_low": S_LOW, "s_high": S_HIGH, "progress_method": PROGRESS_METHOD}
     input_sha256 = sha256_file(str(VIDEO_SOURCE)) if isinstance(VIDEO_SOURCE, str) else None
     model_sha256 = sha256_file(MODEL_PATH)
     roi_points = [list(point) for point in ROI_POINTS]
@@ -163,6 +165,7 @@ def main() -> None:
         "timing_schema_version": TIMING_SCHEMA_VERSION,
         "s_low": S_LOW,
         "s_high": S_HIGH,
+        "progress_method": PROGRESS_METHOD,
         "cleanup_threshold": CLEANUP_THRESHOLD,
         "max_candidate_age": MAX_CANDIDATE_AGE,
         "s_history_limit": S_HISTORY_LIMIT,
@@ -177,6 +180,7 @@ def main() -> None:
             "tracker_config", "tracker_config_sha256", "device_name", "device_accelerator",
             "frame_width", "frame_height", "source_fps", "warmup_frames", "save_video",
             "show_display", "timing_schema_version", "s_low", "s_high",
+            "progress_method",
             "cleanup_threshold", "max_candidate_age", "s_history_limit", "git_sha",
             "git_dirty", "git_dirty_fingerprint", "python_version", "library_versions",
         )
@@ -241,7 +245,7 @@ def main() -> None:
                         cx, cy = (x1 + x2) / 2, float(y2)
                         if not is_in_roi((cx, cy), ROI_POINTS):
                             continue
-                        s = calc_s(cy, y_min, y_max)
+                        s = progress_fn((cx, cy), ROI_POINTS)
                         track_id = int(tid)
                         counter.update(track_id, s, frame_idx)
                     counter.cleanup(frame_idx)
@@ -254,7 +258,7 @@ def main() -> None:
                             cx, cy = (x1 + x2) / 2, float(y2)
                             if not is_in_roi((cx, cy), ROI_POINTS):
                                 continue
-                            s = calc_s(cy, y_min, y_max)
+                            s = progress_fn((cx, cy), ROI_POINTS)
                             track_id = int(tid)
                             state = counter.tracks[track_id].state
                             draw_bbox_with_info(
@@ -334,6 +338,7 @@ def main() -> None:
             "measured_frames": len(measured),
             "s_low":  S_LOW,
             "s_high": S_HIGH,
+            "progress_method": PROGRESS_METHOD,
             "cleanup_threshold": CLEANUP_THRESHOLD,
             "max_candidate_age": MAX_CANDIDATE_AGE,
             "s_history_limit": S_HISTORY_LIMIT,

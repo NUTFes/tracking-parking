@@ -21,8 +21,12 @@ from ultralytics import YOLO
 
 from src.counter import Counter
 from src.events import EVENT_COLUMNS, build_event_rows
-from src.roi import get_roi_y_range, is_in_roi
-from src.progress import calc_s
+from src.progress import get_progress_fn
+from src.progress_diagnostics import (
+    build_progress_diagnostics,
+    snapshot_in_candidate_tracks,
+)
+from src.roi import is_in_roi
 from src.tracker_lifecycle import prepare_model_for_run
 
 from common.wandb_logger import ExperimentLogger
@@ -97,6 +101,7 @@ YOLO_DEVICE = os.getenv("YOLO_DEVICE") or None  # 未指定は Ultralytics の�
 YOLO_IMGSZ = int(os.getenv("YOLO_IMGSZ", "640"))
 YOLO_TRACKER = os.getenv("YOLO_TRACKER", "botsort.yaml")
 WARMUP_FRAMES = validate_warmup_frames(os.getenv("WARMUP_FRAMES", DEFAULT_WARMUP_FRAMES))
+PROGRESS_METHOD = os.getenv("PROGRESS_METHOD", "y_normalized")
 # ────────────────────────────────────────────────────────────────────────────
 
 SWEEP_CONDITION_KEYS = (
@@ -107,6 +112,7 @@ SWEEP_CONDITION_KEYS = (
     "device_accelerator", "frame_width", "frame_height", "source_fps",
     "warmup_frames", "save_video", "show_display", "timing_schema_version",
     "s_low", "s_high", "cleanup_threshold", "max_candidate_age", "s_history_limit",
+    "progress_method",
     "git_sha", "git_dirty", "git_dirty_fingerprint",
     "python_version", "library_versions",
 )
@@ -186,6 +192,9 @@ def empty_run_result() -> dict:
         "active_detections": 0,
         "retained_states": 0,
         "archived_events": 0,
+        "total_track_instances": 0,
+        "progress_method": PROGRESS_METHOD,
+        "diagnostics": {},
     }
 
 
@@ -199,7 +208,7 @@ def run_once(model: YOLO, video_source: str, roi_points: list,
     fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
     w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    y_min, y_max = get_roi_y_range(roi_points)
+    progress_fn = get_progress_fn(PROGRESS_METHOD)
     counter = Counter(
         s_low,
         s_high,
@@ -210,6 +219,7 @@ def run_once(model: YOLO, video_source: str, roi_points: list,
     timing_records: list[FrameTiming] = []
     frame_idx = 0
     max_active_detections = 0
+    candidate_snapshots = {}
     synchronize_model = model_synchronizer(model, YOLO_DEVICE)
 
     while cap.isOpened():
@@ -240,7 +250,16 @@ def run_once(model: YOLO, video_source: str, roi_points: list,
                     cx, cy = (x1 + x2) / 2, float(y2)
                     if not is_in_roi((cx, cy), roi_points):
                         continue
-                    counter.update(int(tid), calc_s(cy, y_min, y_max), frame_idx)
+                    counter.update(
+                        int(tid), progress_fn((cx, cy), roi_points), frame_idx
+                    )
+                for track in counter.tracks.values():
+                    key = (track.track_id, track.first_seen_frame)
+                    if track.counted_as is not None:
+                        candidate_snapshots.pop(key, None)
+                candidate_snapshots.update(
+                    snapshot_in_candidate_tracks(counter.tracks.values())
+                )
                 counter.cleanup(frame_idx)
 
         timing_records.append(FrameTiming(
@@ -262,6 +281,19 @@ def run_once(model: YOLO, video_source: str, roi_points: list,
         WARMUP_FRAMES,
         archive=counter.get_archived_events(),
     )
+    diagnostics = build_progress_diagnostics(
+        counter.get_all_tracks(),
+        counter.get_archived_events(),
+        total_track_instances=counter.total_track_instances,
+        count_in=counter.count_in,
+        count_out=counter.count_out,
+        in_candidate_tracks=candidate_snapshots.values(),
+    )
+    if len(events) != counter.count_in + counter.count_out:
+        raise ValueError(
+            "イベント行数とカウント値が一致しません: "
+            f"events={len(events)}, counts={counter.count_in + counter.count_out}"
+        )
     return {
         "count_in":      counter.count_in,
         "count_out":     counter.count_out,
@@ -275,6 +307,9 @@ def run_once(model: YOLO, video_source: str, roi_points: list,
         "active_detections": max_active_detections,
         "retained_states": len(counter.tracks),
         "archived_events": len(counter.archive),
+        "total_track_instances": counter.total_track_instances,
+        "progress_method": PROGRESS_METHOD,
+        "diagnostics": diagnostics,
     }
 
 
@@ -328,7 +363,11 @@ def main() -> None:
 
             # ── W&B: (s_low, s_high, video) の組ごとに 1 run（config + summary のみ）──
             dataset = Path(video).stem
-            exp_params = {"s_low": s_low, "s_high": s_high}
+            exp_params = {
+                "s_low": s_low,
+                "s_high": s_high,
+                "progress_method": PROGRESS_METHOD,
+            }
             config = {
                 "logic_name": "roi_counter",
                 "dataset": dataset,
@@ -364,6 +403,7 @@ def main() -> None:
                 "timing_schema_version": TIMING_SCHEMA_VERSION,
                 "s_low": s_low,
                 "s_high": s_high,
+                "progress_method": PROGRESS_METHOD,
                 "cleanup_threshold": CLEANUP_THRESHOLD,
                 "max_candidate_age": MAX_CANDIDATE_AGE,
                 "s_history_limit": S_HISTORY_LIMIT,
@@ -401,6 +441,13 @@ def main() -> None:
                     "active_detections": res["active_detections"],
                     "retained_states": res["retained_states"],
                     "archived_events": res["archived_events"],
+                    "total_track_instances": res["total_track_instances"],
+                    "counted_track_instances": res["diagnostics"]["counted_track_instances"],
+                    "in_candidate_stuck_count": res["diagnostics"]["in_candidate_stuck_count"],
+                    "in_candidate_s_max_min": res["diagnostics"]["s_max_summary"]["min"],
+                    "in_candidate_s_max_median": res["diagnostics"]["s_max_summary"]["median"],
+                    "in_candidate_s_max_mean": res["diagnostics"]["s_max_summary"]["mean"],
+                    "in_candidate_s_max_max": res["diagnostics"]["s_max_summary"]["max"],
                     **stats,
                 })
             except BaseException:
@@ -422,8 +469,21 @@ def main() -> None:
                 out_dir / "manifests" / f"{config['execution_id']}.json",
                 config=config,
                 output_dir=out_dir,
-                output_paths=["results.csv", "mae_summary.csv", "events.csv"],
+                output_paths=[
+                    "results.csv", "mae_summary.csv", "events.csv",
+                    f"diagnostics/{config['execution_id']}.json",
+                    f"diagnostics/{config['execution_id']}.csv",
+                ],
                 wandb_run_id=logger.run_id,
+            )
+            diagnostics_dir = out_dir / "diagnostics"
+            diagnostics_dir.mkdir(parents=True, exist_ok=True)
+            diagnostics_path = diagnostics_dir / f"{config['execution_id']}.json"
+            diagnostics_path.write_text(
+                json.dumps(res["diagnostics"], indent=2, ensure_ascii=False)
+            )
+            pd.DataFrame(res["diagnostics"]["in_candidate_tracks"]).to_csv(
+                diagnostics_dir / f"{config['execution_id']}.csv", index=False
             )
             print(f"IN={res['count_in']} OUT={res['count_out']} err={count_error} "
                   f"reset={res['tracker_reset_method']}")

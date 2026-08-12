@@ -91,6 +91,11 @@ def test_cleanup_parameters_are_part_of_sweep_condition():
     assert "s_history_limit" in mae.SWEEP_CONDITION_KEYS
 
 
+def test_progress_method_is_part_of_sweep_condition_and_defaults_to_y_normalized():
+    assert "progress_method" in mae.SWEEP_CONDITION_KEYS
+    assert mae.PROGRESS_METHOD == "y_normalized"
+
+
 def test_event_csv_columns_prefix_sweep_identity():
     assert mae.EVENT_CSV_COLUMNS[:3] == ("s_low", "s_high", "video")
     assert mae.EVENT_CSV_COLUMNS[3:] == mae.EVENT_COLUMNS

@@ -29,10 +29,13 @@ class Counter:
         self.archive: List[CountedEvent] = []
         self.count_in = 0
         self.count_out = 0
+        # cleanup後のID再利用も別track instanceとして診断できるようにする。
+        self.total_track_instances = 0
 
     def update(self, track_id: int, s: float, frame_idx: Optional[int] = None) -> None:
         if track_id not in self.tracks:
             self.tracks[track_id] = VehicleTrack(track_id=track_id)
+            self.total_track_instances += 1
 
         track = self.tracks[track_id]
         if frame_idx is not None:
