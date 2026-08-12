@@ -33,6 +33,9 @@ roi-counter/
 | `ROI_POINTS` | ROIの4頂点（画素座標，左上から時計回り） |
 | `S_LOW` | 入口側バンドの上限（`s < S_LOW` → 入口側） |
 | `S_HIGH` | 奥側バンドの下限（`s > S_HIGH` → 奥側） |
+| `CLEANUP_THRESHOLD` | 未更新trackを削除またはarchiveへ移すまでのフレーム数（既定150） |
+| `MAX_CANDIDATE_AGE` | 候補状態を維持する最大フレーム数（既定300） |
+| `S_HISTORY_LIMIT` | trackごとに保持する`s_history`の最大件数（既定300、0は無制限） |
 | `VEHICLE_CLASSES` | 検出対象クラス（COCO: `2`=car, `7`=truck） |
 
 ## scripts/ 各スクリプトの用途と入力
@@ -106,6 +109,20 @@ tracker・device・warm-up・動画保存/表示設定を一致させる。こ�
 `run_manifest.json`はW&Bの有効・無効にかかわらず保存し、上記ID、W&B config、
 ローカル出力の絶対パスを相互参照できるようにする。
 
+#### Trackのcleanupとイベントarchive
+
+`scripts/02_run_analysis.py`と`scripts/04_multi_video_mae.py`は、毎フレームの更新後に
+stale trackをcleanupする。
+
+未確定trackは`CLEANUP_THRESHOLD`を超えて未更新になると削除する。
+
+`COUNTED` trackは履歴全体を保持せず、確定フレームと`s`要約値だけをarchiveへ移す。
+
+`events.csv`はactive trackとarchiveの両方から生成するため、archive移動後も
+イベント行数は`count_in + count_out`と一致する。
+
+W&Bには`active_detections`、`retained_states`、`archived_events`を分けて記録する。
+
 ---
 
 ### 03_sweep_params.py
@@ -164,11 +181,9 @@ frame_index, timestamp_sec, is_warmup` に、どのパラメータ・動画のru
 `s_low, s_high, video` を先頭に付けたもの。組み合わせ数が多いため個別ファイルに
 せず単一の集約CSVにしている。
 
-> **将来のstale cleanup対応(#99)への注意**: `events.csv` は `Counter.tracks` から
-> `counted_frame` を持つトラックを抽出して生成する（`src/events.py`）。#99で
-> `COUNTED` 状態のトラックを削除する実装を入れる場合、削除対象から除外するか
-> `retired` リストへ退避して `get_all_tracks()` に含めること。さもないと
-> イベントが記録から消える。
+`events.csv`は`Counter.tracks`とarchiveを結合して生成する。
+
+track IDが再利用された場合も、過去のarchiveイベントと新しいactiveイベントを別行として保存する。
 
 `results.csv`には`tracker_reset`、`tracker_reset_method`、`ultralytics_version`も
 記録する。`03_sweep_params.py`と同じ共通処理を使い、動画・閾値の各runを独立させる。

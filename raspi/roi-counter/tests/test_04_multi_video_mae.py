@@ -80,6 +80,15 @@ def test_empty_run_result_contains_all_downstream_keys():
         "frame_width", "frame_height", "source_fps", "events",
     }
     assert result["events"] == []
+    assert result["active_detections"] == 0
+    assert result["retained_states"] == 0
+    assert result["archived_events"] == 0
+
+
+def test_cleanup_parameters_are_part_of_sweep_condition():
+    assert "cleanup_threshold" in mae.SWEEP_CONDITION_KEYS
+    assert "max_candidate_age" in mae.SWEEP_CONDITION_KEYS
+    assert "s_history_limit" in mae.SWEEP_CONDITION_KEYS
 
 
 def test_event_csv_columns_prefix_sweep_identity():

@@ -2,7 +2,7 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parents[1]))
 
-from src.counter import Counter
+from src.counter import CountedEvent, Counter
 from src.events import EVENT_COLUMNS, build_event_rows
 from src.tracker import VehicleTrack
 
@@ -85,3 +85,29 @@ def test_event_count_matches_counter_totals():
 
     rows = build_event_rows(counter.get_all_tracks(), fps=20.0, warmup_frames=30)
     assert len(rows) == counter.count_in + counter.count_out
+
+
+def test_build_event_rows_includes_archive_and_active_tracks_in_order():
+    active = VehicleTrack(track_id=3, counted_as="IN", counted_frame=30)
+    archived = CountedEvent(
+        track_id=1,
+        counted_as="OUT",
+        counted_frame=10,
+        first_seen_frame=0,
+        last_seen_frame=10,
+        s_min=0.1,
+        s_max=0.9,
+        s_first=0.9,
+        s_last=0.1,
+        n_samples=4,
+    )
+
+    rows = build_event_rows(
+        [active],
+        fps=20.0,
+        warmup_frames=30,
+        archive=[archived],
+    )
+
+    assert [row["track_id"] for row in rows] == [1, 3]
+    assert [row["event_type"] for row in rows] == ["OUT", "IN"]

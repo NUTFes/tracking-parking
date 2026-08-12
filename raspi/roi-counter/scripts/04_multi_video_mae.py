@@ -79,6 +79,9 @@ S_LOW_LIST  = parse_float_list(
 S_HIGH_LIST = parse_float_list(
     os.getenv("S_HIGH_LIST"), [0.60, 0.65], source="S_HIGH_LIST"
 )
+CLEANUP_THRESHOLD = 150
+MAX_CANDIDATE_AGE = 300
+S_HISTORY_LIMIT = 300
 VEHICLE_CLASSES = [2, 7]  # COCO: 2=car, 7=truck
 MODEL_PATH = "yolov8s.pt"
 
@@ -103,7 +106,8 @@ SWEEP_CONDITION_KEYS = (
     "tracker_config_sha256", "tracker_reset", "ultralytics_version", "device_name",
     "device_accelerator", "frame_width", "frame_height", "source_fps",
     "warmup_frames", "save_video", "show_display", "timing_schema_version",
-    "s_low", "s_high", "git_sha", "git_dirty", "git_dirty_fingerprint",
+    "s_low", "s_high", "cleanup_threshold", "max_candidate_age", "s_history_limit",
+    "git_sha", "git_dirty", "git_dirty_fingerprint",
     "python_version", "library_versions",
 )
 
@@ -179,6 +183,9 @@ def empty_run_result() -> dict:
         "timings": [],
         "events": [],
         "frame_width": 0, "frame_height": 0, "source_fps": 0.0,
+        "active_detections": 0,
+        "retained_states": 0,
+        "archived_events": 0,
     }
 
 
@@ -193,9 +200,16 @@ def run_once(model: YOLO, video_source: str, roi_points: list,
     w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     y_min, y_max = get_roi_y_range(roi_points)
-    counter = Counter(s_low, s_high)
+    counter = Counter(
+        s_low,
+        s_high,
+        cleanup_threshold=CLEANUP_THRESHOLD,
+        max_candidate_age=MAX_CANDIDATE_AGE,
+        s_history_limit=S_HISTORY_LIMIT,
+    )
     timing_records: list[FrameTiming] = []
     frame_idx = 0
+    max_active_detections = 0
     synchronize_model = model_synchronizer(model, YOLO_DEVICE)
 
     while cap.isOpened():
@@ -218,6 +232,7 @@ def run_once(model: YOLO, video_source: str, roi_points: list,
                     detections = list(zip(
                         boxes.xyxy.cpu().numpy(), boxes.id.cpu().numpy()
                     ))
+                max_active_detections = max(max_active_detections, len(detections))
 
             with elapsed_timer() as counting_timer:
                 for xyxy, tid in detections:
@@ -226,6 +241,7 @@ def run_once(model: YOLO, video_source: str, roi_points: list,
                     if not is_in_roi((cx, cy), roi_points):
                         continue
                     counter.update(int(tid), calc_s(cy, y_min, y_max), frame_idx)
+                counter.cleanup(frame_idx)
 
         timing_records.append(FrameTiming(
             frame_index=frame_idx,
@@ -240,7 +256,12 @@ def run_once(model: YOLO, video_source: str, roi_points: list,
 
     cap.release()
     frame_times = [timing.core_ms for timing in timing_records]
-    events = build_event_rows(counter.get_all_tracks(), float(fps), WARMUP_FRAMES)
+    events = build_event_rows(
+        counter.get_all_tracks(),
+        float(fps),
+        WARMUP_FRAMES,
+        archive=counter.get_archived_events(),
+    )
     return {
         "count_in":      counter.count_in,
         "count_out":     counter.count_out,
@@ -251,6 +272,9 @@ def run_once(model: YOLO, video_source: str, roi_points: list,
         "frame_width":   w,
         "frame_height":  h,
         "source_fps":    float(fps),
+        "active_detections": max_active_detections,
+        "retained_states": len(counter.tracks),
+        "archived_events": len(counter.archive),
     }
 
 
@@ -340,6 +364,9 @@ def main() -> None:
                 "timing_schema_version": TIMING_SCHEMA_VERSION,
                 "s_low": s_low,
                 "s_high": s_high,
+                "cleanup_threshold": CLEANUP_THRESHOLD,
+                "max_candidate_age": MAX_CANDIDATE_AGE,
+                "s_history_limit": S_HISTORY_LIMIT,
                 **reproducibility,
             }
             config["comparison_key"] = build_comparison_key(config)
@@ -371,6 +398,9 @@ def main() -> None:
                     "count_error": count_error,
                     "gt_in": gt_in,
                     "gt_out": gt_out,
+                    "active_detections": res["active_detections"],
+                    "retained_states": res["retained_states"],
+                    "archived_events": res["archived_events"],
                     **stats,
                 })
             except BaseException:

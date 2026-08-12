@@ -55,6 +55,9 @@ ROI_POINTS = [
 ]
 S_LOW  = 0.25
 S_HIGH = 0.75
+CLEANUP_THRESHOLD = 150
+MAX_CANDIDATE_AGE = 300
+S_HISTORY_LIMIT = 300
 VEHICLE_CLASSES = [2, 7]  # COCO: 2=car, 7=truck
 MODEL_PATH = "yolov8s.pt"
 
@@ -86,6 +89,15 @@ def resolve_output_dir(video_source: str | int, exp_name: str) -> Path:
     return base / f"{stem}_{ts}"
 
 
+def build_state_metrics(counter: Counter, active_detections: int) -> dict[str, int]:
+    """W&Bへ出す検出数、保持状態数、archive数をまとめる。"""
+    return {
+        "active_detections": active_detections,
+        "retained_states": len(counter.tracks),
+        "archived_events": len(counter.archive),
+    }
+
+
 def main() -> None:
     out_dir = resolve_output_dir(VIDEO_SOURCE, EXP_NAME)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -104,7 +116,13 @@ def main() -> None:
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         writer = cv2.VideoWriter(str(out_dir / "annotated.mp4"), fourcc, fps, (w, h))
 
-    counter = Counter(S_LOW, S_HIGH)
+    counter = Counter(
+        S_LOW,
+        S_HIGH,
+        cleanup_threshold=CLEANUP_THRESHOLD,
+        max_candidate_age=MAX_CANDIDATE_AGE,
+        s_history_limit=S_HISTORY_LIMIT,
+    )
     y_min, y_max = get_roi_y_range(ROI_POINTS)
 
     # ── W&B 初期化 ──────────────────────────────────────────────────────────
@@ -145,6 +163,9 @@ def main() -> None:
         "timing_schema_version": TIMING_SCHEMA_VERSION,
         "s_low": S_LOW,
         "s_high": S_HIGH,
+        "cleanup_threshold": CLEANUP_THRESHOLD,
+        "max_candidate_age": MAX_CANDIDATE_AGE,
+        "s_history_limit": S_HISTORY_LIMIT,
         **reproducibility,
     }
     config["comparison_key"] = build_comparison_key(config)
@@ -155,7 +176,8 @@ def main() -> None:
             "vehicle_classes", "yolo_conf", "yolo_iou", "yolo_device", "yolo_imgsz",
             "tracker_config", "tracker_config_sha256", "device_name", "device_accelerator",
             "frame_width", "frame_height", "source_fps", "warmup_frames", "save_video",
-            "show_display", "timing_schema_version", "s_low", "s_high", "git_sha",
+            "show_display", "timing_schema_version", "s_low", "s_high",
+            "cleanup_threshold", "max_candidate_age", "s_history_limit", "git_sha",
             "git_dirty", "git_dirty_fingerprint", "python_version", "library_versions",
         )
     }
@@ -181,6 +203,7 @@ def main() -> None:
 
     timing_records: list[FrameTiming] = []
     frame_idx = 0
+    num_tracks = 0
     exit_code = 0
     # 相対時間サンプリング用の状態
     next_log_sec = 0.0
@@ -221,6 +244,7 @@ def main() -> None:
                         s = calc_s(cy, y_min, y_max)
                         track_id = int(tid)
                         counter.update(track_id, s, frame_idx)
+                    counter.cleanup(frame_idx)
 
                 quit_requested = False
                 with elapsed_timer() as output_timer:
@@ -278,7 +302,7 @@ def main() -> None:
                         "frame_ms": timing.core_ms,
                         "is_warmup": timing.is_warmup,
                         "num_tracks": num_tracks,
-                        "retained_states": len(counter.tracks),
+                        **build_state_metrics(counter, num_tracks),
                     },
                 )
                 # 次の定期サンプリング境界へ進める（変化ログで飛んでも間隔を維持）
@@ -310,6 +334,10 @@ def main() -> None:
             "measured_frames": len(measured),
             "s_low":  S_LOW,
             "s_high": S_HIGH,
+            "cleanup_threshold": CLEANUP_THRESHOLD,
+            "max_candidate_age": MAX_CANDIDATE_AGE,
+            "s_history_limit": S_HISTORY_LIMIT,
+            **build_state_metrics(counter, num_tracks),
         }
         (out_dir / "result.json").write_text(json.dumps(result, indent=2, ensure_ascii=False))
 
@@ -323,7 +351,12 @@ def main() -> None:
             for t in counter.get_all_tracks()
         ]
         pd.DataFrame(vehicles).to_csv(out_dir / "vehicles.csv", index=False)
-        event_rows = build_event_rows(counter.get_all_tracks(), float(fps), WARMUP_FRAMES)
+        event_rows = build_event_rows(
+            counter.get_all_tracks(),
+            float(fps),
+            WARMUP_FRAMES,
+            archive=counter.get_archived_events(),
+        )
         pd.DataFrame(event_rows, columns=list(EVENT_COLUMNS)).to_csv(
             out_dir / "events.csv", index=False
         )
@@ -337,6 +370,7 @@ def main() -> None:
             "count_out": counter.count_out,
             "total_frames": frame_idx,
             "measured_frames": len(measured),
+            **build_state_metrics(counter, num_tracks),
             **stats,
         })
         logger.save_run_id(out_dir)

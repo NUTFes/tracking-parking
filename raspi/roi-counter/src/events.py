@@ -1,20 +1,24 @@
 from typing import Iterable, List, Optional
 
-from .tracker import VehicleTrack
+from .tracker import CountedEvent, VehicleTrack
 
 EVENT_COLUMNS = ("track_id", "event_type", "frame_index", "timestamp_sec", "is_warmup")
 
 
 def build_event_rows(
-    tracks: Iterable[VehicleTrack], fps: float, warmup_frames: int
+    tracks: Iterable[VehicleTrack],
+    fps: float,
+    warmup_frames: int,
+    archive: Iterable[CountedEvent] = (),
 ) -> List[dict]:
-    """カウント確定済みトラックからイベント列を生成する。
+    """active trackとarchiveからカウント確定イベント列を生成する。
 
     warmup中に確定したイベントも除外しない(件数 = count_in + count_out を保つため)。
     ``is_warmup`` 列で明示する。
     """
 
     counted = [track for track in tracks if track.counted_as is not None]
+    counted.extend(archive)
     counted.sort(key=lambda track: (track.counted_frame is None, track.counted_frame, track.track_id))
 
     rows = []
