@@ -385,23 +385,27 @@ def process_video(
                                 "confidence": state.confidence,
                                 "line2_crossed": state.line2_direction is not None,
                             })
-                    confidence_updates = tracker.resolve_pending_confidences(frame_id)
                     tracker.cleanup_stale_tracks(frame_id)
 
                 core_ms = inference_timer.elapsed_ms + counting_timer.elapsed_ms
                 quit_requested = False
                 with elapsed_timer() as output_timer:
                     for event in pending_events:
-                        event_logger.record_event(**event)
+                        event_id = event_logger.record_event(**event)
+                        state = tracker.get_state(event["track_id"])
+                        if state is not None:
+                            state.pending_event_id = event_id
+                    # event_idを割り当ててからconfidenceをイベントへ反映する必要がある。
+                    confidence_updates = tracker.resolve_pending_confidences(frame_id)
                     for update in confidence_updates:
                         if not event_logger.update_confidence(
-                            update.track_id,
+                            update.event_id,
                             update.confidence,
                             line2_crossed=update.line2_crossed,
                         ):
                             raise RuntimeError(
                                 "confidence更新対象のイベントが見つかりません: "
-                                f"track_id={update.track_id}"
+                                f"event_id={update.event_id}"
                             )
                         for event in pending_events:
                             if event["track_id"] == update.track_id:
@@ -479,13 +483,13 @@ def process_video(
         final_confidence_updates = tracker.finalize_pending_confidences()
         for update in final_confidence_updates:
             if not event_logger.update_confidence(
-                update.track_id,
+                update.event_id,
                 update.confidence,
                 line2_crossed=update.line2_crossed,
             ):
                 raise RuntimeError(
                     "終了時confidence更新対象のイベントが見つかりません: "
-                    f"track_id={update.track_id}"
+                    f"event_id={update.event_id}"
                 )
         orphan_pending = event_logger.finalize_pending_confidences()
         if orphan_pending:

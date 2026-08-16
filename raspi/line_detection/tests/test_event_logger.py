@@ -83,7 +83,7 @@ def test_save_json_omits_accuracy_block_when_absent(tmp_path):
 
 def test_update_confidence_updates_event_and_line2_crossing():
     logger = EventLogger(video_path="test.mp4")
-    logger.record_event(
+    event_id = logger.record_event(
         track_id=7,
         event_type="IN",
         frame_id=10,
@@ -92,14 +92,39 @@ def test_update_confidence_updates_event_and_line2_crossing():
         line2_crossed=False,
     )
 
-    assert logger.update_confidence(7, "high", line2_crossed=True) is True
+    assert logger.update_confidence(event_id, "high", line2_crossed=True) is True
     assert logger.events[0].confidence == "high"
     assert logger.events[0].line2_crossed is True
 
 
-def test_update_confidence_returns_false_for_unknown_track():
+def test_update_confidence_returns_false_for_unknown_event():
     logger = EventLogger(video_path="test.mp4")
-    assert logger.update_confidence(999, "normal") is False
+    assert logger.update_confidence("missing-event-id", "normal") is False
+
+
+def test_record_event_generates_unique_event_ids():
+    logger = EventLogger(video_path="test.mp4")
+    event_ids = {
+        logger.record_event(1, "IN", frame_id, 30.0, "pending", False)
+        for frame_id in range(3)
+    }
+
+    assert len(event_ids) == 3
+
+
+def test_update_confidence_targets_reused_track_id_event_by_event_id():
+    logger = EventLogger(video_path="test.mp4")
+    resolved_event_id = logger.record_event(7, "IN", 1, 30.0, "high", True)
+    pending_event_id = logger.record_event(7, "IN", 2, 30.0, "pending", False)
+
+    assert logger.update_confidence(
+        pending_event_id, "normal", line2_crossed=True
+    ) is True
+    assert logger.events[0].event_id == resolved_event_id
+    assert logger.events[0].confidence == "high"
+    assert logger.events[1].event_id == pending_event_id
+    assert logger.events[1].confidence == "normal"
+    assert logger.events[1].line2_crossed is True
 
 
 def test_finalize_pending_confidences_and_validate_summary():

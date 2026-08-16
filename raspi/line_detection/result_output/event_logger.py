@@ -6,6 +6,7 @@
 import json
 import csv
 import os
+import uuid
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 
@@ -14,6 +15,7 @@ class Event:
     """イベントデータクラス"""
 
     def __init__(self,
+                 event_id: str,
                  track_id: int,
                  event_type: str,
                  frame_id: int,
@@ -22,6 +24,7 @@ class Event:
                  line2_crossed: bool):
         """
         Args:
+            event_id: イベントを一意に識別するID
             track_id: トラッキングID
             event_type: イベントタイプ("IN" or "OUT")
             frame_id: フレーム番号
@@ -29,6 +32,7 @@ class Event:
             confidence: 信頼度("high" or "normal")
             line2_crossed: Line2を交差したか
         """
+        self.event_id = event_id
         self.track_id = track_id
         self.event_type = event_type
         self.frame_id = frame_id
@@ -44,7 +48,8 @@ class Event:
             "frame_id": self.frame_id,
             "timestamp_sec": round(self.timestamp_sec, 2),
             "confidence": self.confidence,
-            "line2_crossed": self.line2_crossed
+            "line2_crossed": self.line2_crossed,
+            "event_id": self.event_id,
         }
 
 
@@ -68,7 +73,7 @@ class EventLogger:
                     frame_id: int,
                     fps: float,
                     confidence: str,
-                    line2_crossed: bool):
+                    line2_crossed: bool) -> str:
         """
         イベントを記録
 
@@ -82,7 +87,9 @@ class EventLogger:
         """
         timestamp_sec = frame_id / fps if fps > 0 else 0.0
 
+        event_id = uuid.uuid4().hex
         event = Event(
+            event_id=event_id,
             track_id=track_id,
             event_type=event_type,
             frame_id=frame_id,
@@ -92,19 +99,18 @@ class EventLogger:
         )
 
         self.events.append(event)
+        return event_id
 
     def update_confidence(
         self,
-        track_id: int,
+        event_id: str,
         confidence: str,
         line2_crossed: Optional[bool] = None,
     ) -> bool:
-        """track_idで既存イベントを検索し、後追いの確定結果を反映する。"""
-        matched = [event for event in self.events if event.track_id == track_id]
+        """event_idで既存イベントを検索し、後追いの確定結果を反映する。"""
+        matched = [event for event in self.events if event.event_id == event_id]
         if not matched:
             return False
-        if len(matched) > 1:
-            raise ValueError(f"同一track_idのイベントが重複しています: {track_id}")
 
         event = matched[0]
         event.confidence = confidence
@@ -287,7 +293,8 @@ class EventLogger:
                     "frame_id",
                     "timestamp_sec",
                     "confidence",
-                    "line2_crossed"
+                    "line2_crossed",
+                    "event_id",
                 ])
             else:
                 # イベントがある場合
@@ -297,7 +304,8 @@ class EventLogger:
                     "frame_id",
                     "timestamp_sec",
                     "confidence",
-                    "line2_crossed"
+                    "line2_crossed",
+                    "event_id",
                 ]
                 writer = csv.DictWriter(f, fieldnames=fieldnames)
 

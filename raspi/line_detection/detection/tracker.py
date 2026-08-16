@@ -19,6 +19,7 @@ class ConfidenceUpdate:
     """イベントログへ反映する確定済みconfidence。"""
 
     track_id: int
+    event_id: Optional[str]
     confidence: FinalConfidence
     line2_crossed: bool
 
@@ -49,6 +50,7 @@ class VehicleState:
     passed_order: List[str] = field(default_factory=list)  # ["line1", "line2"] など
     counted: bool = False
     confidence: Optional[Confidence] = None
+    pending_event_id: Optional[str] = None
 
     # 更新追跡
     last_update_frame: int = 0
@@ -257,6 +259,7 @@ class VehicleTracker:
                 self._record_confidence_resolution(resolved)
                 updates.append(ConfidenceUpdate(
                     track_id=state.track_id,
+                    event_id=state.pending_event_id,
                     confidence=resolved,
                     line2_crossed=state.line2_direction is not None,
                 ))
@@ -273,6 +276,7 @@ class VehicleTracker:
             self._record_confidence_resolution("normal")
             updates.append(ConfidenceUpdate(
                 track_id=state.track_id,
+                event_id=state.pending_event_id,
                 confidence="normal",
                 line2_crossed=state.line2_direction is not None,
             ))
