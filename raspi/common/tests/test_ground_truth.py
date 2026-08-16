@@ -4,6 +4,8 @@ import pytest
 
 from common.frame_timing import COMPARISON_CONFIG_KEYS
 from common.ground_truth import (
+    DEFAULT_TOLERANCE_SEC,
+    GtEvent,
     GroundTruth,
     build_ground_truth_config,
     build_ground_truth_summary,
@@ -148,7 +150,14 @@ def test_count_error_matches_roi_04_formula_when_both_directions_present():
 
 
 def test_comparison_key_ignores_ground_truth_keys():
-    for key in ("ground_truth_config", "ground_truth_sha256", "gt_in", "gt_out"):
+    for key in (
+        "ground_truth_config",
+        "ground_truth_sha256",
+        "gt_in",
+        "gt_out",
+        "events",
+        "tolerance_sec",
+    ):
         assert key not in COMPARISON_CONFIG_KEYS
 
 
@@ -167,3 +176,83 @@ def test_build_ground_truth_summary_includes_count_error():
     summary = build_ground_truth_summary(20, 1, gt)
     assert summary["gt_in"] == 22
     assert summary["count_error"] == 3
+
+
+def test_gt_without_events_and_tolerance_is_backward_compatible(tmp_path):
+    path = write_gt(tmp_path, "gt.json", {"in": 22, "out": 0})
+    gt = load_ground_truth(str(tmp_path / "clip.MOV"), str(path))
+    assert gt.events == ()
+    assert gt.tolerance_sec == DEFAULT_TOLERANCE_SEC
+
+
+def test_valid_events_and_tolerance_are_parsed(tmp_path):
+    path = write_gt(
+        tmp_path,
+        "gt.json",
+        {
+            "in": 1,
+            "out": 1,
+            "events": [
+                {"event_id": "event-1", "direction": "IN", "t_sec": 12},
+                {"event_id": "event-2", "direction": "OUT", "t_sec": 45.5},
+            ],
+            "tolerance_sec": 7.5,
+        },
+    )
+    gt = load_ground_truth(str(tmp_path / "clip.MOV"), str(path))
+    assert gt.events == (
+        GtEvent(event_id="event-1", direction="IN", t_sec=12.0),
+        GtEvent(event_id="event-2", direction="OUT", t_sec=45.5),
+    )
+    assert gt.tolerance_sec == 7.5
+
+
+def test_duplicate_event_id_is_rejected(tmp_path):
+    path = write_gt(
+        tmp_path,
+        "gt.json",
+        {
+            "in": 2,
+            "out": 0,
+            "events": [
+                {"event_id": "same", "direction": "IN", "t_sec": 1},
+                {"event_id": "same", "direction": "OUT", "t_sec": 2},
+            ],
+        },
+    )
+    with pytest.raises(ValueError, match=str(path)):
+        load_ground_truth(str(tmp_path / "clip.MOV"), str(path))
+
+
+def test_invalid_event_direction_is_rejected(tmp_path):
+    path = write_gt(
+        tmp_path,
+        "gt.json",
+        {"in": 1, "out": 0, "events": [{"event_id": "event-1", "direction": "SIDE", "t_sec": 1}]},
+    )
+    with pytest.raises(ValueError, match=str(path)):
+        load_ground_truth(str(tmp_path / "clip.MOV"), str(path))
+
+
+@pytest.mark.parametrize("t_sec", [-1, "not-a-number"])
+def test_invalid_event_time_is_rejected(tmp_path, t_sec):
+    path = write_gt(
+        tmp_path,
+        "gt.json",
+        {"in": 1, "out": 0, "events": [{"event_id": "event-1", "direction": "IN", "t_sec": t_sec}]},
+    )
+    with pytest.raises(ValueError, match=str(path)):
+        load_ground_truth(str(tmp_path / "clip.MOV"), str(path))
+
+
+def test_events_must_be_a_list(tmp_path):
+    path = write_gt(tmp_path, "gt.json", {"in": 1, "out": 0, "events": {}})
+    with pytest.raises(ValueError, match=str(path)):
+        load_ground_truth(str(tmp_path / "clip.MOV"), str(path))
+
+
+@pytest.mark.parametrize("tolerance_sec", [0, -1, "not-a-number"])
+def test_invalid_tolerance_is_rejected(tmp_path, tolerance_sec):
+    path = write_gt(tmp_path, "gt.json", {"in": 1, "out": 0, "tolerance_sec": tolerance_sec})
+    with pytest.raises(ValueError, match=str(path)):
+        load_ground_truth(str(tmp_path / "clip.MOV"), str(path))
