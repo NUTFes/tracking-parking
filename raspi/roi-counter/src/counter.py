@@ -1,4 +1,5 @@
 from typing import Dict, List, Optional
+import uuid
 
 from .tracker import CountedEvent, VehicleState, VehicleTrack
 
@@ -68,6 +69,7 @@ class Counter:
                 track.state = VehicleState.COUNTED
                 track.counted_as = "IN"
                 track.counted_frame = frame_idx
+                track.event_id = uuid.uuid4().hex
                 self.count_in += 1
 
         elif track.state == VehicleState.OUT_CANDIDATE:
@@ -75,6 +77,7 @@ class Counter:
                 track.state = VehicleState.COUNTED
                 track.counted_as = "OUT"
                 track.counted_frame = frame_idx
+                track.event_id = uuid.uuid4().hex
                 self.count_out += 1
 
     def get_all_tracks(self) -> List[VehicleTrack]:
@@ -106,6 +109,7 @@ class Counter:
                 self.archive.append(
                     CountedEvent(
                         track_id=track.track_id,
+                        event_id=track.event_id,
                         counted_as=track.counted_as,
                         counted_frame=track.counted_frame,
                         first_seen_frame=track.first_seen_frame,

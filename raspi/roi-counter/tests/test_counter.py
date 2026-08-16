@@ -91,6 +91,35 @@ def test_counted_frame_stays_none_before_transition():
     assert c.tracks[1].counted_frame is None
 
 
+def test_event_id_is_set_only_when_track_is_counted():
+    c = Counter(s_low=0.25, s_high=0.75)
+    c.update(1, 0.1, 0)
+    assert c.tracks[1].event_id is None
+
+    c.update(1, 0.8, 1)
+    assert c.tracks[1].state == VehicleState.COUNTED
+    assert c.tracks[1].event_id is not None
+
+    c.update(2, 0.9, 2)
+    assert c.tracks[2].event_id is None
+
+    c.update(2, 0.1, 3)
+    assert c.tracks[2].state == VehicleState.COUNTED
+    assert c.tracks[2].event_id is not None
+
+
+def test_event_id_is_unique_across_counted_tracks():
+    c = Counter(s_low=0.25, s_high=0.75)
+    c.update(1, 0.1, 0)
+    c.update(1, 0.8, 1)
+    c.update(2, 0.9, 2)
+    c.update(2, 0.1, 3)
+
+    event_ids = {c.tracks[1].event_id, c.tracks[2].event_id}
+    assert None not in event_ids
+    assert len(event_ids) == 2
+
+
 def test_update_tracks_frame_and_s_summaries():
     c = Counter(s_history_limit=3)
     for frame_idx, s in enumerate([0.1, 0.4, 0.8, 0.6]):
@@ -197,6 +226,17 @@ def test_counted_track_moves_to_archive_without_changing_count():
     assert archived.candidate_started_frame == 0
     assert archived.s_first == 0.1
     assert archived.s_max == 0.8
+
+
+def test_event_id_survives_archiving():
+    c = Counter(cleanup_threshold=10)
+    c.update(1, 0.1, 0)
+    c.update(1, 0.8, 1)
+    event_id = c.tracks[1].event_id
+
+    c.cleanup(12)
+
+    assert c.archive[0].event_id == event_id
 
 
 def test_reused_track_id_gets_a_new_state_after_cleanup():

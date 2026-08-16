@@ -11,6 +11,7 @@ def test_initial_state():
     assert t.s_history == []
     assert t.counted_as is None
     assert t.counted_frame is None
+    assert t.event_id is None
 
 
 def test_s_history_independent():
@@ -35,6 +36,7 @@ def test_track_metadata_defaults_are_empty():
 def test_counted_event_is_defined_with_track_metadata():
     event = CountedEvent(
         track_id=1,
+        event_id="evt-1",
         counted_as="IN",
         counted_frame=10,
         first_seen_frame=0,

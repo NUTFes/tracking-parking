@@ -2,7 +2,7 @@ from typing import Iterable, List, Optional
 
 from .tracker import CountedEvent, VehicleTrack
 
-EVENT_COLUMNS = ("track_id", "event_type", "frame_index", "timestamp_sec", "is_warmup")
+EVENT_COLUMNS = ("track_id", "event_type", "frame_index", "timestamp_sec", "is_warmup", "event_id")
 
 
 def build_event_rows(
@@ -36,5 +36,6 @@ def build_event_rows(
             "frame_index": frame_index,
             "timestamp_sec": timestamp_sec,
             "is_warmup": is_warmup,
+            "event_id": track.event_id,
         })
     return rows

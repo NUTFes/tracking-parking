@@ -15,6 +15,7 @@ class CountedEvent:
     """COUNTED trackから履歴を除いて保持する軽量イベント。"""
 
     track_id: int
+    event_id: Optional[str]
     counted_as: Optional[str]
     counted_frame: Optional[int]
     first_seen_frame: Optional[int]
@@ -34,6 +35,7 @@ class VehicleTrack:
     s_history: List[float] = field(default_factory=list)
     counted_as: Optional[str] = None  # "IN" | "OUT"
     counted_frame: Optional[int] = None  # COUNTED へ遷移したフレーム番号
+    event_id: Optional[str] = None
     first_seen_frame: Optional[int] = None
     candidate_started_frame: Optional[int] = None
     last_seen_frame: Optional[int] = None

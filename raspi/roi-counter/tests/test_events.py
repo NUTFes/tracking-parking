@@ -88,9 +88,15 @@ def test_event_count_matches_counter_totals():
 
 
 def test_build_event_rows_includes_archive_and_active_tracks_in_order():
-    active = VehicleTrack(track_id=3, counted_as="IN", counted_frame=30)
+    active = VehicleTrack(
+        track_id=3,
+        event_id="evt-active",
+        counted_as="IN",
+        counted_frame=30,
+    )
     archived = CountedEvent(
         track_id=1,
+        event_id="evt-archived",
         counted_as="OUT",
         counted_frame=10,
         first_seen_frame=0,
@@ -112,3 +118,4 @@ def test_build_event_rows_includes_archive_and_active_tracks_in_order():
 
     assert [row["track_id"] for row in rows] == [1, 3]
     assert [row["event_type"] for row in rows] == ["OUT", "IN"]
+    assert [row["event_id"] for row in rows] == ["evt-archived", "evt-active"]
