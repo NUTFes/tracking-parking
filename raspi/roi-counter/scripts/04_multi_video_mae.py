@@ -49,6 +49,7 @@ from common.frame_timing import (
     sha256_file,
     validate_warmup_frames,
 )
+from common.ground_truth import load_ground_truth
 
 def parse_float_list(raw: str | None, default: list[float], *, source: str) -> list[float]:
     """カンマ区切りの閾値リストを環境変数から読む。未設定・空文字なら default を返す。
@@ -123,15 +124,25 @@ EVENT_CSV_COLUMNS = ("s_low", "s_high", "video", *EVENT_COLUMNS)
 def load_configs(gt_dir: str) -> list[dict]:
     configs = []
     for p in sorted(Path(gt_dir).glob("*.json")):
-        cfg = json.loads(p.read_text())
-        for key in ("video", "roi", "in", "out"):
-            if key not in cfg:
-                print(f"[WARN] {p.name} に '{key}' がありません．スキップします．")
-                break
-        else:
-            cfg["_config_path"] = str(p)
-            cfg["_config_sha256"] = sha256_file(str(p))
-            configs.append(cfg)
+        raw = json.loads(p.read_text())
+        if "video" not in raw or "roi" not in raw:
+            print(f"[WARN] {p.name} に 'video' または 'roi' がありません．スキップします．")
+            continue
+        try:
+            gt = load_ground_truth(raw["video"], explicit_path=str(p))
+        except (ValueError, FileNotFoundError) as exc:
+            print(f"[WARN] {p.name} の読み込みに失敗しました．スキップします： {exc}")
+            continue
+        if gt.gt_in is None or gt.gt_out is None:
+            print(f"[WARN] {p.name} に 'in' または 'out' がありません．スキップします．")
+            continue
+        cfg = dict(raw)
+        cfg["in"] = gt.gt_in
+        cfg["out"] = gt.gt_out
+        cfg["_config_path"] = gt.path
+        cfg["_config_sha256"] = gt.sha256
+        cfg["_gt"] = gt
+        configs.append(cfg)
     if not configs:
         print(f"[ERROR] {gt_dir} に有効なJSONが見つかりません")
         sys.exit(1)
