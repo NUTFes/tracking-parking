@@ -129,6 +129,50 @@ def segment_crossing_param(p_from: Tuple[float, float],
 
 
 @dataclass
+class CrossingGeometry:
+    """交差点のライン上射影、移動線分上の位置、交差点座標"""
+    t: float
+    u: float
+    point: Tuple[float, float]
+
+
+def segment_crossing_geometry(
+        p_from: Tuple[float, float],
+        p_to: Tuple[float, float],
+        line: Line) -> Optional[CrossingGeometry]:
+    """p_from→p_to と line の交差に関する幾何情報を返す。"""
+    d_from = signed_distance(p_from, line)
+    d_to = signed_distance(p_to, line)
+
+    if d_from * d_to >= 0:
+        return None
+
+    denom = d_from - d_to
+    if denom == 0.0:
+        return None
+
+    u = d_from / denom
+    cross_x = p_from[0] + u * (p_to[0] - p_from[0])
+    cross_y = p_from[1] + u * (p_to[1] - p_from[1])
+
+    ab_x = line.end[0] - line.start[0]
+    ab_y = line.end[1] - line.start[1]
+    ap_x = cross_x - line.start[0]
+    ap_y = cross_y - line.start[1]
+    length_sq = ab_x * ab_x + ab_y * ab_y
+    t = (ap_x * ab_x + ap_y * ab_y) / length_sq
+
+    return CrossingGeometry(t=t, u=u, point=(cross_x, cross_y))
+
+
+@dataclass
+class CrossingResult:
+    """成立したライン交差の方向と交差点"""
+    direction: str  # "IN" or "OUT"
+    point: Tuple[float, float]
+
+
+@dataclass
 class LineTransitionState:
     """track 1本 × ライン1本ぶんのヒステリシス状態"""
     stable_side: Optional[int] = None
@@ -189,7 +233,7 @@ class LineCrossingDetector:
 
     def update_line1_crossing(self,
                               transition_state: LineTransitionState,
-                              curr_point: Tuple[float, float]) -> Optional[str]:
+                              curr_point: Tuple[float, float]) -> Optional[CrossingResult]:
         """
         Line1(入口側)の交差を判定し、ヒステリシス状態を更新する
 
@@ -198,10 +242,7 @@ class LineCrossingDetector:
             curr_point: 現フレームの車両位置
 
         Returns:
-            Optional[str]:
-                "IN": 入庫方向に交差
-                "OUT": 出庫方向に交差
-                None: 交差なし
+            Optional[CrossingResult]: 成立した交差の方向と交差点、またはNone
         """
         return self._update_crossing(
             transition_state,
@@ -213,7 +254,7 @@ class LineCrossingDetector:
 
     def update_line2_crossing(self,
                               transition_state: LineTransitionState,
-                              curr_point: Tuple[float, float]) -> Optional[str]:
+                              curr_point: Tuple[float, float]) -> Optional[CrossingResult]:
         """
         Line2(駐車場側)の交差を判定し、ヒステリシス状態を更新する
 
@@ -222,10 +263,7 @@ class LineCrossingDetector:
             curr_point: 現フレームの車両位置
 
         Returns:
-            Optional[str]:
-                "IN": 入庫方向に交差
-                "OUT": 出庫方向に交差
-                None: 交差なし
+            Optional[CrossingResult]: 成立した交差の方向と交差点、またはNone
         """
         return self._update_crossing(
             transition_state,
@@ -240,7 +278,7 @@ class LineCrossingDetector:
                         curr_point: Tuple[float, float],
                         line: Line,
                         parking_side: float,
-                        line_len: float) -> Optional[str]:
+                        line_len: float) -> Optional[CrossingResult]:
         """
         ヒステリシス方式によるライン交差判定(内部実装)
 
@@ -252,10 +290,7 @@ class LineCrossingDetector:
             line_len: lineの長さ(px)
 
         Returns:
-            Optional[str]:
-                "IN": 入庫方向に交差
-                "OUT": 出庫方向に交差
-                None: 交差なし
+            Optional[CrossingResult]: 成立した交差の方向と交差点、またはNone
         """
         side = classify_side(curr_point, line, self.margin_px)
 
@@ -276,17 +311,20 @@ class LineCrossingDetector:
             return None
 
         # side == -stable_side: 反対の安定側へ抜けた
-        t = segment_crossing_param(
+        geometry = segment_crossing_geometry(
             transition_state.last_stable_point, curr_point, line
         )
         event = None
-        if t is not None:
+        if geometry is not None:
             e = (self.endpoint_margin_px / line_len) if line_len > 0 else 0.0
-            if -e <= t <= 1.0 + e:
+            if -e <= geometry.t <= 1.0 + e:
                 # 駐車場基準点でIN/OUT判定
                 # sideとparking_sideの符号が同じ = 駐車場側に移動 = IN
                 # sideとparking_sideの符号が異なる = 道路側に移動 = OUT
-                event = "IN" if side * parking_side > 0 else "OUT"
+                event = CrossingResult(
+                    direction="IN" if side * parking_side > 0 else "OUT",
+                    point=geometry.point,
+                )
 
         # ブックキーピングは判定の成否と無関係に更新する。
         # stable_sideは「curr_pointが現在どちらの安定側にいるか」という

@@ -1,4 +1,5 @@
 import sys
+import math
 from pathlib import Path
 
 
@@ -34,12 +35,28 @@ def process_frame(tracker, detector, track_id, point, frame_id):
     """main.py の per-frame ループ本体(cleanup呼び出しを除く)を1track分再現する。"""
     state = tracker.update(track_id, point, frame_id)
 
-    line1_dir = detector.update_line1_crossing(state.line1_transition, state.curr_point)
-    line2_dir = detector.update_line2_crossing(state.line2_transition, state.curr_point)
-    if line1_dir and not state.counted:
-        state.record_line1_crossing(line1_dir, frame_id)
-    if line2_dir:
-        state.record_line2_crossing(line2_dir, frame_id)
+    line1_result = detector.update_line1_crossing(
+        state.line1_transition, state.curr_point
+    )
+    line2_result = detector.update_line2_crossing(
+        state.line2_transition, state.curr_point
+    )
+    crossings = []
+    if line1_result is not None:
+        crossings.append(("line1", line1_result))
+    if line2_result is not None:
+        crossings.append(("line2", line2_result))
+    if len(crossings) == 2:
+        crossings.sort(
+            key=lambda item: math.dist(state.curr_point, item[1].point),
+            reverse=True,
+        )
+    for line_name, result in crossings:
+        if line_name == "line1":
+            if not state.counted:
+                state.record_line1_crossing(result.direction, frame_id)
+        else:
+            state.record_line2_crossing(result.direction, frame_id)
     if tracker.should_count_event(state):
         tracker.mark_as_counted(track_id)
     tracker.resolve_pending_confidences(frame_id)
@@ -203,6 +220,42 @@ def test_out_line2_then_line1_resolves_high_on_line1_frame():
     assert state.confidence == "high"
     assert tracker.total_out == 1
     assert tracker.high_confidence_count == 1
+
+
+def test_out_single_frame_double_crossing_resolves_high_in_physical_order():
+    tracker, detector = make_tracker_and_detector(margin_px=5)
+
+    process_frame(tracker, detector, 1, (50, 61), frame_id=0)
+    state = process_frame(tracker, detector, 1, (50, -11), frame_id=1)
+
+    assert state.passed_order == ["line2", "line1"]
+    assert state.confidence == "high"
+
+
+def test_in_single_frame_double_crossing_resolves_high_in_physical_order():
+    tracker, detector = make_tracker_and_detector(margin_px=5)
+
+    process_frame(tracker, detector, 1, (50, -11), frame_id=0)
+    state = process_frame(tracker, detector, 1, (50, 61), frame_id=1)
+
+    assert state.passed_order == ["line1", "line2"]
+    assert state.confidence == "high"
+
+
+def test_same_frame_order_uses_crossing_points_when_start_points_differ():
+    tracker, detector = make_tracker_and_detector(margin_px=5)
+
+    process_frame(tracker, detector, 1, (50, 61), frame_id=0)
+    process_frame(tracker, detector, 1, (50, 58), frame_id=1)
+    state = process_frame(tracker, detector, 1, (50, 54), frame_id=2)
+
+    assert state.line1_transition.last_stable_point == (50, 54)
+    assert state.line2_transition.last_stable_point == (50, 58)
+
+    state = process_frame(tracker, detector, 1, (50, -11), frame_id=3)
+
+    assert state.passed_order == ["line2", "line1"]
+    assert state.confidence == "high"
 
 
 def test_pending_in_resolves_normal_after_gap_exceeds_boundary():

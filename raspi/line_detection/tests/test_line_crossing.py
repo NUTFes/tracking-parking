@@ -13,6 +13,7 @@ from detection.line_crossing import (
     LineTransitionState,
     classify_side,
     line_length,
+    segment_crossing_geometry,
     segment_crossing_param,
     side_of_line,
     signed_distance,
@@ -92,6 +93,15 @@ def test_segment_crossing_param_on_boundary_same_side_returns_none():
     assert segment_crossing_param((40, 0), (60, 10), LINE) is None
 
 
+def test_segment_crossing_geometry_returns_line_and_movement_parameters():
+    geometry = segment_crossing_geometry((40, -20), (40, 30), LINE)
+
+    assert geometry is not None
+    assert geometry.t == pytest.approx(0.40)
+    assert geometry.u == pytest.approx(0.40)
+    assert geometry.point == pytest.approx((40.0, 0.0))
+
+
 def test_endpoint_margin_widens_valid_range():
     # t=1.50 のケースを、endpoint_margin_pxを介した許容範囲で判定する
     t = segment_crossing_param((150, -20), (150, 30), LINE)
@@ -142,7 +152,9 @@ def test_hysteresis_slow_crossing_detected_exactly_once():
 
     results = [detector.update_line1_crossing(state, p) for p in points]
 
-    assert results == [None, None, None, None, "IN", None]
+    assert [result.direction if result else None for result in results] == [
+        None, None, None, None, "IN", None
+    ]
 
 
 def test_hysteresis_large_single_frame_jump_still_detected():
@@ -150,7 +162,8 @@ def test_hysteresis_large_single_frame_jump_still_detected():
     state = LineTransitionState()
 
     assert detector.update_line1_crossing(state, (50, -12)) is None
-    assert detector.update_line1_crossing(state, (50, 18)) == "IN"
+    result = detector.update_line1_crossing(state, (50, 18))
+    assert result.direction == "IN"
 
 
 def test_hysteresis_extension_flip_reports_no_event_but_updates_stable_side():
@@ -176,7 +189,7 @@ def test_hysteresis_extension_flip_then_real_crossing_detected():
 
     result = detector.update_line1_crossing(state, (50, -20))
 
-    assert result == "OUT"
+    assert result.direction == "OUT"
 
 
 def test_hysteresis_never_initializes_from_dead_zone_point():
@@ -208,4 +221,4 @@ def test_hysteresis_endpoint_margin_widened_accepts_near_extension_crossing():
     detector.update_line1_crossing(state, (-30, -20))
     result = detector.update_line1_crossing(state, (-30, 30))
 
-    assert result == "IN"
+    assert result.direction == "IN"

@@ -7,6 +7,7 @@ YOLOv8トラッキングと外積法を使用した高精度な入出庫カウ�
 
 import cv2
 import argparse
+import math
 import os
 import platform
 import sys
@@ -346,16 +347,34 @@ def process_video(
                         vehicle_point = get_vehicle_point(bbox)
                         state = tracker.update(track_id, vehicle_point, frame_id)
 
-                        line1_dir = detector.update_line1_crossing(
+                        line1_result = detector.update_line1_crossing(
                             state.line1_transition, state.curr_point
                         )
-                        line2_dir = detector.update_line2_crossing(
+                        line2_result = detector.update_line2_crossing(
                             state.line2_transition, state.curr_point
                         )
-                        if line1_dir and not state.counted:
-                            state.record_line1_crossing(line1_dir, frame_id)
-                        if line2_dir:
-                            state.record_line2_crossing(line2_dir, frame_id)
+                        crossings = []
+                        if line1_result is not None:
+                            crossings.append(("line1", line1_result))
+                        if line2_result is not None:
+                            crossings.append(("line2", line2_result))
+                        if len(crossings) == 2:
+                            crossings.sort(
+                                key=lambda item: math.dist(
+                                    state.curr_point, item[1].point
+                                ),
+                                reverse=True,
+                            )
+                        for line_name, result in crossings:
+                            if line_name == "line1":
+                                if not state.counted:
+                                    state.record_line1_crossing(
+                                        result.direction, frame_id
+                                    )
+                            else:
+                                state.record_line2_crossing(
+                                    result.direction, frame_id
+                                )
                         if tracker.should_count_event(state):
                             event_type = tracker.mark_as_counted(track_id)
                             pending_events.append({
