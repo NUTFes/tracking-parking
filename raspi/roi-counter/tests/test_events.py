@@ -94,6 +94,7 @@ def test_build_event_rows_includes_archive_and_active_tracks_in_order():
         counted_as="OUT",
         counted_frame=10,
         first_seen_frame=0,
+        candidate_started_frame=0,
         last_seen_frame=10,
         s_min=0.1,
         s_max=0.9,

@@ -38,6 +38,7 @@ def test_counted_event_is_defined_with_track_metadata():
         counted_as="IN",
         counted_frame=10,
         first_seen_frame=0,
+        candidate_started_frame=0,
         last_seen_frame=10,
         s_min=0.1,
         s_max=0.8,

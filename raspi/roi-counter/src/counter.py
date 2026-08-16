@@ -58,8 +58,10 @@ class Counter:
         if track.state == VehicleState.UNKNOWN:
             if s < self.s_low:
                 track.state = VehicleState.IN_CANDIDATE
+                track.candidate_started_frame = frame_idx
             elif s > self.s_high:
                 track.state = VehicleState.OUT_CANDIDATE
+                track.candidate_started_frame = frame_idx
 
         elif track.state == VehicleState.IN_CANDIDATE:
             if s > self.s_high:
@@ -89,10 +91,11 @@ class Counter:
         for track_id, track in self.tracks.items():
             if (
                 track.state in (VehicleState.IN_CANDIDATE, VehicleState.OUT_CANDIDATE)
-                and track.first_seen_frame is not None
-                and current_frame - track.first_seen_frame > self.max_candidate_age
+                and track.candidate_started_frame is not None
+                and current_frame - track.candidate_started_frame > self.max_candidate_age
             ):
                 track.state = VehicleState.UNKNOWN
+                track.candidate_started_frame = None
 
             if track.last_seen_frame is None:
                 continue
@@ -106,6 +109,7 @@ class Counter:
                         counted_as=track.counted_as,
                         counted_frame=track.counted_frame,
                         first_seen_frame=track.first_seen_frame,
+                        candidate_started_frame=track.candidate_started_frame,
                         last_seen_frame=track.last_seen_frame,
                         s_min=track.s_min,
                         s_max=track.s_max,

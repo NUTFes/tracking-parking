@@ -126,16 +126,57 @@ def test_cleanup_boundary_keeps_unknown_then_removes_at_plus_one():
     assert 1 not in c.tracks
 
 
-def test_candidate_expires_from_first_seen_frame():
+def test_candidate_expires_from_candidate_started_frame():
     c = Counter(max_candidate_age=3, cleanup_threshold=10)
-    c.update(1, 0.1, 0)
-    c.update(1, 0.5, 3)
-    c.cleanup(3)
+    c.update(1, 0.5, 0)
+    c.update(1, 0.1, 1)
+    assert c.tracks[1].candidate_started_frame == 1
+
+    c.cleanup(4)
     assert c.tracks[1].state == VehicleState.IN_CANDIDATE
 
-    c.update(1, 0.5, 4)
+    c.cleanup(5)
+    assert c.tracks[1].state == VehicleState.UNKNOWN
+    assert c.tracks[1].candidate_started_frame is None
+
+
+def test_continuously_detected_track_can_count_after_becoming_candidate():
+    c = Counter(max_candidate_age=300)
+    for frame_idx in range(331):
+        c.update(1, 0.5, frame_idx)
+        c.cleanup(frame_idx)
+
+    c.update(1, 0.1, 331)
+    c.cleanup(331)
+    assert c.tracks[1].state == VehicleState.IN_CANDIDATE
+
+    c.update(1, 0.8, 390)
+
+    assert c.count_in == 1
+    assert c.tracks[1].state == VehicleState.COUNTED
+
+
+def test_candidate_started_frame_updates_after_expiry():
+    c = Counter(max_candidate_age=3, cleanup_threshold=10)
+    c.update(1, 0.1, 0)
     c.cleanup(4)
     assert c.tracks[1].state == VehicleState.UNKNOWN
+    assert c.tracks[1].candidate_started_frame is None
+
+    c.update(1, 0.1, 10)
+
+    assert c.tracks[1].state == VehicleState.IN_CANDIDATE
+    assert c.tracks[1].candidate_started_frame == 10
+
+
+def test_update_without_frame_idx_skips_candidate_expiry():
+    c = Counter(max_candidate_age=0, cleanup_threshold=10)
+    c.update(1, 0.1)
+
+    c.cleanup(100)
+
+    assert c.tracks[1].state == VehicleState.IN_CANDIDATE
+    assert c.tracks[1].candidate_started_frame is None
 
 
 def test_counted_track_moves_to_archive_without_changing_count():
@@ -153,6 +194,7 @@ def test_counted_track_moves_to_archive_without_changing_count():
     assert archived.track_id == 1
     assert archived.counted_as == "IN"
     assert archived.counted_frame == 1
+    assert archived.candidate_started_frame == 0
     assert archived.s_first == 0.1
     assert archived.s_max == 0.8
 

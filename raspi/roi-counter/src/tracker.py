@@ -18,6 +18,7 @@ class CountedEvent:
     counted_as: Optional[str]
     counted_frame: Optional[int]
     first_seen_frame: Optional[int]
+    candidate_started_frame: Optional[int]
     last_seen_frame: Optional[int]
     s_min: Optional[float]
     s_max: Optional[float]
@@ -34,6 +35,7 @@ class VehicleTrack:
     counted_as: Optional[str] = None  # "IN" | "OUT"
     counted_frame: Optional[int] = None  # COUNTED へ遷移したフレーム番号
     first_seen_frame: Optional[int] = None
+    candidate_started_frame: Optional[int] = None
     last_seen_frame: Optional[int] = None
     s_min: Optional[float] = None
     s_max: Optional[float] = None
