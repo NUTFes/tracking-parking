@@ -5,7 +5,7 @@ sys.path.insert(0, str(Path(__file__).parents[1]))
 import cv2
 
 from src.roi import get_roi_y_range
-from src.visualizer import draw_roi, draw_band_lines
+from src.visualizer import draw_band_lines, draw_grid, draw_roi
 
 # ── パラメータ ──────────────────────────────────────────────────────────────
 VIDEO_SOURCE: str | int = "data/inputs/IMG_2788_fixed.MOV"
@@ -22,18 +22,6 @@ S_HIGH = 0.60
 # ────────────────────────────────────────────────────────────────────────────
 
 OUTPUT_PATH = Path("data/outputs/roi_check.png")
-
-
-def draw_grid(frame, step: int = 100) -> None:
-    h, w = frame.shape[:2]
-    for x in range(0, w, step):
-        cv2.line(frame, (x, 0), (x, h), (200, 200, 200), 1)
-        cv2.putText(frame, str(x), (x + 2, 12),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.35, (200, 200, 200), 1)
-    for y in range(0, h, step):
-        cv2.line(frame, (0, y), (w, y), (200, 200, 200), 1)
-        cv2.putText(frame, str(y), (2, y + 12),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.35, (200, 200, 200), 1)
 
 
 def main() -> None:

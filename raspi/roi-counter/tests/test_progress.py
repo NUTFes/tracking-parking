@@ -11,8 +11,15 @@ from src.progress import (
     calc_s_edge_distance,
     calc_s_y_normalized,
     get_progress_fn,
+    iso_s_segment,
     validate_roi_points,
 )
+
+# 正方形・台形・回転ROI。台形・回転は上のテストで使っている座標と同一にし、
+# 期待値の根拠を再利用する。
+_SQUARE_ROI = [(0, 0), (100, 0), (100, 100), (0, 100)]
+_TRAPEZOID_ROI = [(20, 0), (80, 0), (100, 100), (0, 100)]
+_ROTATED_ROI = [(0.0, 0.0), (70.71, 70.71), (0.0, 141.42), (-70.71, 70.71)]
 
 
 def test_s_at_y_max():
@@ -77,3 +84,34 @@ def test_progress_method_registry_and_validation():
 
 def test_validate_roi_points_public_alias():
     assert _validate_roi_points is validate_roi_points
+
+
+@pytest.mark.parametrize("roi", [_SQUARE_ROI, _TRAPEZOID_ROI, _ROTATED_ROI])
+@pytest.mark.parametrize("s", [0.15, 0.5, 0.6])
+def test_iso_s_segment_endpoints_have_requested_s(roi, s):
+    # 描画（visualizer.draw_band_lines_edge_distance）が実際の判定境界と
+    # 一致することを保証する要のテスト。iso_s_segmentが返す線分の両端点を
+    # 実際の判定関数calc_s_edge_distanceへ通し、要求したsが返ることを固定する。
+    start, end = iso_s_segment(s, roi)
+    assert calc_s_edge_distance(start, roi) == pytest.approx(s, abs=1e-4)
+    assert calc_s_edge_distance(end, roi) == pytest.approx(s, abs=1e-4)
+
+
+def test_iso_s_segment_is_horizontal_for_axis_aligned_rectangle():
+    start, end = iso_s_segment(0.25, _SQUARE_ROI)
+    assert start[1] == pytest.approx(end[1])
+
+
+def test_iso_s_segment_matches_draw_band_lines_y_for_rectangle():
+    # 矩形ROIではy_normalizedの水平線とedge_distanceの等s線が一致する
+    # （src/visualizer.pyのdraw_band_linesが使うy=y_max-s*(y_max-y_min)と
+    # 同じ高さになる）。tests/test_visualizer.pyのs_low=0.25の期待値と揃える。
+    roi = [(100, 100), (300, 100), (300, 200), (100, 200)]
+    start, end = iso_s_segment(0.25, roi)
+    assert start[1] == pytest.approx(175.0)
+    assert end[1] == pytest.approx(175.0)
+
+
+def test_iso_s_segment_rejects_degenerate_roi():
+    with pytest.raises(ValueError):
+        iso_s_segment(0.5, [(0, 0), (1, 0), (1, 1)])

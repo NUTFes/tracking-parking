@@ -11,6 +11,14 @@ Point: TypeAlias = tuple[float, float]
 RoiPoints: TypeAlias = Sequence[tuple[float, float]]
 ProgressFn: TypeAlias = Callable[[Point, RoiPoints], float]
 
+# calc_s_edge_distance・iso_s_segment が共有する透視変換の写像先。
+# OpenCVの画像座標で、上側の奥辺をv=1、下側の入口辺をv=0へ対応させる。
+# ここに1箇所だけ持ち、視覚化側（visualizer.py）には複製しない。
+_DESTINATION = np.array(
+    [[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]],
+    dtype=np.float32,
+)
+
 
 def calc_s_y_normalized(y: float, y_min: float, y_max: float) -> float:
     """ROIのy範囲だけを使って進行度を計算する。
@@ -53,17 +61,37 @@ def calc_s_edge_distance(point: Point, roi_points: RoiPoints) -> float:
     if point_array.shape != (2,) or not np.isfinite(point_array).all():
         raise ValueError("pointは有限な(x, y)で指定する必要があります")
 
-    # OpenCVの画像座標で、上側の奥辺をv=1、下側の入口辺をv=0へ対応させる。
-    destination = np.array(
-        [[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]],
-        dtype=np.float32,
-    )
     try:
-        transform = cv2.getPerspectiveTransform(points, destination)
+        transform = cv2.getPerspectiveTransform(points, _DESTINATION)
         mapped = cv2.perspectiveTransform(point_array.reshape(1, 1, 2), transform)
     except cv2.error as exc:
         raise ValueError("ROIから進行度変換を構成できません") from exc
     return float(mapped[0, 0, 1])
+
+
+def iso_s_segment(s: float, roi_points: RoiPoints) -> tuple[Point, Point]:
+    """edge_distance方式で進行度がsになる線分の両端点を、画像座標で返す。
+
+    calc_s_edge_distanceが使う透視変換（_DESTINATION）の逆写像で
+    (0, s) と (1, s) を画像座標へ戻す。同一の変換を逆に使うだけなので、
+    このセグメント上の任意の点をcalc_s_edge_distanceに通すと、
+    誤差の範囲でsが返ることが構成上保証される。
+
+    描画（visualizer.draw_band_lines_edge_distance）が実際の判定と
+    一致することを保証するための幾何関数。可視化ロジックはvisualizer.py側に
+    置き、ここでは幾何計算のみを行う。
+    """
+    points = validate_roi_points(roi_points)
+    try:
+        inverse = cv2.getPerspectiveTransform(_DESTINATION, points)
+        ends = cv2.perspectiveTransform(
+            np.array([[[0.0, s], [1.0, s]]], dtype=np.float32), inverse
+        )
+    except cv2.error as exc:
+        raise ValueError("ROIから進行度変換を構成できません") from exc
+    start = (float(ends[0, 0, 0]), float(ends[0, 0, 1]))
+    end = (float(ends[0, 1, 0]), float(ends[0, 1, 1]))
+    return start, end
 
 
 def _calc_s_y_normalized_from_point(point: Point, roi_points: RoiPoints) -> float:
