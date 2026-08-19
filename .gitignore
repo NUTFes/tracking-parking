@@ -16,6 +16,11 @@ raspi/result/prediction_visual.png
 data/
 data/*
 
+# wandbライブラリがUSE_WANDB=true時にCWD直下へ自動生成するrunディレクトリ
+# （data/outputs/配下のoffline run一式とは別物。scripts実行時のCWD次第で
+# raspi/roi-counter/wandb/ 等、data/の外にも作られるため個別に除外する）
+wandb/
+
 # files and directories for AI agents
 CLAUDE.md
 docs/

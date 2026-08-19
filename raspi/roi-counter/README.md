@@ -325,6 +325,30 @@ ROI counterのテストを実行すること。
 下げた場合の机上確定数を保存する。
 `diagnostics/{execution_id}.csv`には停滞trackごとのfirst/last seen、s要約値、サンプル数を保存する。
 
+### s_low/s_high 書き戻し履歴（edge_distance）
+
+`data/inputs/configs/IMG_2787_gt.json` の `s_low`/`s_high` は手動編集で更新するため
+（`data/` はgit管理外）、更新の根拠はここに追記する。
+
+- 2026-08-20: `s_low=0.20`, `s_high=0.45` に更新（初回のedge_distance検証）。
+  根拠: `PROGRESS_METHOD=edge_distance`（既定）で`S_LOW_LIST=0.05..0.45`×
+  `S_HIGH_LIST=0.55..0.95`（`EXP_NAME=exp_edge_distance_sweep`）を実行したところ、
+  `s_low`は0.05〜0.45の全域で結果に無関係、`s_high`は0.55でMAE=0、0.60で
+  早くもMAE=4まで悪化する崖状の分布だった。境界値（0.55）をそのまま採用すると
+  頑健性を欠くため、`S_HIGH_LIST=0.20..0.55`まで探索範囲を下方向に拡張して
+  再検証（`EXP_NAME=exp_edge_distance_sweep_refine`）したところ、
+  `s_high=0.20〜0.55`の全域でMAE=0を確認した。さらに`s_low∈{0.15,0.20,0.25}`×
+  `s_high∈{0.40,0.45,0.50}`の2次元グリッドで直接確認（
+  `EXP_NAME=exp_edge_distance_sweep_confirm`）し、全9通りでMAE=0であることを
+  確認した上で、崖（`s_high=0.60`）から十分な余裕を持つ`s_high=0.45`と、
+  確認済みの安全域の中央付近にあたる`s_low=0.20`を採用した。
+  該当run: `manifests/717ce43a-04f5-4fcc-9d4f-e24798e8a907.json`
+  （W&B run: `a0gex1oc`、`condition_key=ck1_46c006ecdbb82c7edb90785fda82900fd8c91cbaafcea616f2645d0025377279`、
+  `git_sha=d0c612cfeb0c64f17f5dd4c3bc51f831212a973a`）。
+  W&Bプロジェクト`tracking-parking`、group `roi_counter`内で`condition_key`に
+  より検索可能（オフラインrunのため`wandb sync`でのアップロードが未実施）。
+  **既知の限界**: GTが`out=0`の1本のみのため、OUT方向の閾値妥当性は未検証。
+
 ---
 
 ## analysis/
