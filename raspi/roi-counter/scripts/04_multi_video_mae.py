@@ -4,13 +4,20 @@ GT_DIR 配下の各 JSON（video・roi・in・out を含む）を読み込み，
 PARAM_LIST の (s_low, s_high) ごとに全動画を処理してMAEを算出する．
 
 W&B 連携: (s_low, s_high, video) の組ごとに 1 run（config + summary のみ・時系列なし）．
+
+動画1本ぶんのYOLO推論は build_detection_trace() でs_low/s_high全組み合わせに対して
+1回だけ実行し、閾値ごとのカウントロジックは replay_counts() がそのキャッシュを
+再生する（検出結果はs_low/s_highに一切依存しないため）。
 """
 import json
 import os
 import platform
 import sys
+import uuid
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 sys.path.insert(0, str(Path(__file__).parents[1]))   # 既存: roi-counter/
 sys.path.insert(0, str(Path(__file__).parents[2]))   # 追加: raspi/（common 共有のため）
 
@@ -79,10 +86,14 @@ GT_DIR   = "data/inputs/configs"   # 動画設定JSONのディレクトリ
 EXP_NAME = os.getenv("EXP_NAME", "exp1_mae")
 
 S_LOW_LIST  = parse_float_list(
-    os.getenv("S_LOW_LIST"), [0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40], source="S_LOW_LIST"
+    os.getenv("S_LOW_LIST"),
+    [0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45],
+    source="S_LOW_LIST",
 )
 S_HIGH_LIST = parse_float_list(
-    os.getenv("S_HIGH_LIST"), [0.60, 0.65], source="S_HIGH_LIST"
+    os.getenv("S_HIGH_LIST"),
+    [0.55, 0.60, 0.65, 0.70, 0.75, 0.80, 0.85, 0.90, 0.95],
+    source="S_HIGH_LIST",
 )
 CLEANUP_THRESHOLD = 150
 MAX_CANDIDATE_AGE = 300
@@ -102,7 +113,7 @@ YOLO_DEVICE = os.getenv("YOLO_DEVICE") or None  # 未指定は Ultralytics の�
 YOLO_IMGSZ = int(os.getenv("YOLO_IMGSZ", "640"))
 YOLO_TRACKER = os.getenv("YOLO_TRACKER", "botsort.yaml")
 WARMUP_FRAMES = validate_warmup_frames(os.getenv("WARMUP_FRAMES", DEFAULT_WARMUP_FRAMES))
-PROGRESS_METHOD = os.getenv("PROGRESS_METHOD", "y_normalized")
+PROGRESS_METHOD = os.getenv("PROGRESS_METHOD", "edge_distance")
 # ────────────────────────────────────────────────────────────────────────────
 
 SWEEP_CONDITION_KEYS = (
@@ -155,6 +166,8 @@ def build_sweep_condition(config: dict) -> dict:
     tracker_reset_method は clean_start / tracker_reset / model_reload のように
     実行順や内部API対応状況で変わる実行時情報なので、condition_keyには含めない。
     成否を示す tracker_reset は、不正なrunとの区別のため条件に含める。
+    detection_cached/detection_cache_id も同じ理由（実行方法を示す情報であり
+    結果に影響する条件ではない）で条件キーには含めない。
     """
     return {key: config.get(key) for key in SWEEP_CONDITION_KEYS}
 
@@ -209,17 +222,116 @@ def empty_run_result() -> dict:
     }
 
 
-def run_once(model: YOLO, video_source: str, roi_points: list,
-             s_low: float, s_high: float) -> dict:
+@dataclass(frozen=True)
+class CachedFrame:
+    """1フレームぶんの生の検出結果とread/inferenceタイミング。
+
+    s_low/s_high/ROI/progress_methodのいずれにも依存しない
+    （これらに依存する処理はreplay_counts側で行う）。
+    """
+
+    frame_index: int
+    detections: list[tuple[Any, float]]  # (xyxy, track_id)
+    read_ms: float
+    inference_tracking_ms: float
+    is_warmup: bool
+
+
+@dataclass(frozen=True)
+class DetectionTrace:
+    """動画1本ぶんのYOLO推論結果をキャッシュしたもの。
+
+    build_detection_trace()が動画を1周する間に1回だけ構築し、
+    以降のs_low/s_highスイープではreplay_counts()がこれを繰り返し再生する。
+    """
+
+    frame_width: int
+    frame_height: int
+    source_fps: float
+    frames: list[CachedFrame]
+    active_detections: int
+
+
+def build_detection_trace(model: YOLO, video_source: str) -> DetectionTrace | None:
+    """動画1本ぶんYOLO推論を1回だけ実行し、フレームごとの生の検出結果と
+    read/inferenceタイミングをキャッシュする。
+
+    is_in_roi判定・進行度計算・Counter更新は一切行わない
+    （s_low/s_high/ROI/progress_methodのいずれにも依存しないため）。
+    動画を開けない場合はNoneを返す。
+    """
     cap = cv2.VideoCapture(video_source)
     if not cap.isOpened():
         print(f"[ERROR] 動画を開けません: {video_source}")
-        return empty_run_result()
+        return None
 
     fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
     w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    progress_fn = get_progress_fn(PROGRESS_METHOD)
+    synchronize_model = model_synchronizer(model, YOLO_DEVICE)
+
+    frames: list[CachedFrame] = []
+    max_active_detections = 0
+    frame_idx = 0
+
+    while cap.isOpened():
+        with elapsed_timer() as read_timer:
+            ret, frame = cap.read()
+        if not ret:
+            break
+
+        with elapsed_timer(synchronize_model) as inference_timer:
+            results = model.track(
+                frame, persist=True, verbose=False, classes=VEHICLE_CLASSES,
+                conf=YOLO_CONF, iou=YOLO_IOU, device=YOLO_DEVICE,
+                imgsz=YOLO_IMGSZ, tracker=YOLO_TRACKER,
+            )
+            boxes = results[0].boxes
+            if boxes.id is None:
+                detections = []
+            else:
+                detections = list(zip(
+                    boxes.xyxy.cpu().numpy(), boxes.id.cpu().numpy()
+                ))
+            max_active_detections = max(max_active_detections, len(detections))
+
+        frames.append(CachedFrame(
+            frame_index=frame_idx,
+            detections=detections,
+            read_ms=read_timer.elapsed_ms,
+            inference_tracking_ms=inference_timer.elapsed_ms,
+            is_warmup=frame_idx < WARMUP_FRAMES,
+        ))
+        frame_idx += 1
+
+    cap.release()
+    return DetectionTrace(
+        frame_width=w,
+        frame_height=h,
+        source_fps=float(fps),
+        frames=frames,
+        active_detections=max_active_detections,
+    )
+
+
+def replay_counts(
+    trace: DetectionTrace, roi_points: list, progress_method: str,
+    s_low: float, s_high: float,
+) -> dict:
+    """キャッシュ済みDetectionTraceから、指定の閾値・進行度方式でCounterを
+    1回分だけ再生する。YOLO推論は一切行わない。返り値のキー構成は
+    リファクタ前のrun_once()と同一。
+
+    FrameTimingのread_ms/inference_tracking_msはCachedFrameの実測値を
+    そのままコピーする（同一DetectionTraceを共有する全閾値runで同一値になる）。
+    counting_logic_msだけがこの呼び出しごとに新規に計測される。
+    end_to_end_msはinference_tracking_ms + counting_logic_msとして再構成する
+    （core_msの定義（common/frame_timing.py）と一致させ、frame_times/
+    compute_timing_statsの意味をリファクタ前後で変えないため。
+    read+inference+countingを1本のwall-clockで測るという元の定義は、
+    read/inferenceが別呼び出しで既に終わっているため再現できない）。
+    """
+    progress_fn = get_progress_fn(progress_method)
     counter = Counter(
         s_low,
         s_high,
@@ -228,67 +340,41 @@ def run_once(model: YOLO, video_source: str, roi_points: list,
         s_history_limit=S_HISTORY_LIMIT,
     )
     timing_records: list[FrameTiming] = []
-    frame_idx = 0
-    max_active_detections = 0
     candidate_snapshots = {}
-    synchronize_model = model_synchronizer(model, YOLO_DEVICE)
 
-    while cap.isOpened():
-        with elapsed_timer() as end_to_end_timer:
-            with elapsed_timer() as read_timer:
-                ret, frame = cap.read()
-            if not ret:
-                break
-
-            with elapsed_timer(synchronize_model) as inference_timer:
-                results = model.track(
-                    frame, persist=True, verbose=False, classes=VEHICLE_CLASSES,
-                    conf=YOLO_CONF, iou=YOLO_IOU, device=YOLO_DEVICE,
-                    imgsz=YOLO_IMGSZ, tracker=YOLO_TRACKER,
+    for cached_frame in trace.frames:
+        with elapsed_timer() as counting_timer:
+            for xyxy, tid in cached_frame.detections:
+                x1, _, x2, y2 = map(int, xyxy)
+                cx, cy = (x1 + x2) / 2, float(y2)
+                if not is_in_roi((cx, cy), roi_points):
+                    continue
+                counter.update(
+                    int(tid), progress_fn((cx, cy), roi_points), cached_frame.frame_index
                 )
-                boxes = results[0].boxes
-                if boxes.id is None:
-                    detections = []
-                else:
-                    detections = list(zip(
-                        boxes.xyxy.cpu().numpy(), boxes.id.cpu().numpy()
-                    ))
-                max_active_detections = max(max_active_detections, len(detections))
-
-            with elapsed_timer() as counting_timer:
-                for xyxy, tid in detections:
-                    x1, _, x2, y2 = map(int, xyxy)
-                    cx, cy = (x1 + x2) / 2, float(y2)
-                    if not is_in_roi((cx, cy), roi_points):
-                        continue
-                    counter.update(
-                        int(tid), progress_fn((cx, cy), roi_points), frame_idx
-                    )
-                for track in counter.tracks.values():
-                    key = (track.track_id, track.first_seen_frame)
-                    if track.counted_as is not None:
-                        candidate_snapshots.pop(key, None)
-                candidate_snapshots.update(
-                    snapshot_in_candidate_tracks(counter.tracks.values())
-                )
-                counter.cleanup(frame_idx)
+            for track in counter.tracks.values():
+                key = (track.track_id, track.first_seen_frame)
+                if track.counted_as is not None:
+                    candidate_snapshots.pop(key, None)
+            candidate_snapshots.update(
+                snapshot_in_candidate_tracks(counter.tracks.values())
+            )
+            counter.cleanup(cached_frame.frame_index)
 
         timing_records.append(FrameTiming(
-            frame_index=frame_idx,
-            read_ms=read_timer.elapsed_ms,
-            inference_tracking_ms=inference_timer.elapsed_ms,
+            frame_index=cached_frame.frame_index,
+            read_ms=cached_frame.read_ms,
+            inference_tracking_ms=cached_frame.inference_tracking_ms,
             counting_logic_ms=counting_timer.elapsed_ms,
             output_ms=0.0,
-            end_to_end_ms=end_to_end_timer.elapsed_ms,
-            is_warmup=frame_idx < WARMUP_FRAMES,
+            end_to_end_ms=cached_frame.inference_tracking_ms + counting_timer.elapsed_ms,
+            is_warmup=cached_frame.is_warmup,
         ))
-        frame_idx += 1
 
-    cap.release()
     frame_times = [timing.core_ms for timing in timing_records]
     events = build_event_rows(
         counter.get_all_tracks(),
-        float(fps),
+        trace.source_fps,
         WARMUP_FRAMES,
         archive=counter.get_archived_events(),
     )
@@ -308,18 +394,18 @@ def run_once(model: YOLO, video_source: str, roi_points: list,
     return {
         "count_in":      counter.count_in,
         "count_out":     counter.count_out,
-        "total_frames":  frame_idx,
+        "total_frames":  len(trace.frames),
         "frame_times":   frame_times,
         "timings":       timing_records,
         "events":        events,
-        "frame_width":   w,
-        "frame_height":  h,
-        "source_fps":    float(fps),
-        "active_detections": max_active_detections,
+        "frame_width":   trace.frame_width,
+        "frame_height":  trace.frame_height,
+        "source_fps":    trace.source_fps,
+        "active_detections": trace.active_detections,
         "retained_states": len(counter.tracks),
         "archived_events": len(counter.archive),
         "total_track_instances": counter.total_track_instances,
-        "progress_method": PROGRESS_METHOD,
+        "progress_method": progress_method,
         "diagnostics": diagnostics,
     }
 
@@ -344,33 +430,38 @@ def main() -> None:
     tracker_config_sha256 = sha256_file(YOLO_TRACKER)
     reproducibility = collect_reproducibility_info()
     detail_rows = []
-    summary_rows = []
     event_rows = []
+    errors_by_params: dict[tuple[float, float], list[int]] = {p: [] for p in param_list}
+    elapsed_by_params: dict[tuple[float, float], list[float]] = {p: [] for p in param_list}
 
-    for s_low, s_high in param_list:
-        errors = []
-        elapsed_list = []
+    for cfg in configs:
+        video  = cfg["video"]
+        roi    = [tuple(p) for p in cfg["roi"]]
+        gt_in  = cfg["in"]
+        gt_out = cfg["out"]
 
-        for cfg in configs:
-            video  = cfg["video"]
-            roi    = [tuple(p) for p in cfg["roi"]]
-            gt_in  = cfg["in"]
-            gt_out = cfg["out"]
+        print(f"  検出中: {Path(video).name} ...", end=" ", flush=True)
+        reset_result = prepare_model_for_run(model, MODEL_PATH)
+        model = reset_result.model
+        trace = build_detection_trace(model, video)
+        detection_cache_id = uuid.uuid4().hex
+        print("done" if trace is not None else "動画を開けません")
 
-            print(f"  [{s_low:.2f}/{s_high:.2f}] {Path(video).name} ...", end=" ", flush=True)
-            reset_result = prepare_model_for_run(model, MODEL_PATH)
-            model = reset_result.model
-            res = run_once(model, video, roi, s_low, s_high)
+        for s_low, s_high in param_list:
+            res = (
+                replay_counts(trace, roi, PROGRESS_METHOD, s_low, s_high)
+                if trace is not None else empty_run_result()
+            )
             res.update({
                 "tracker_reset": reset_result.succeeded,
                 "tracker_reset_method": reset_result.method,
                 "ultralytics_version": reset_result.ultralytics_version,
             })
             count_error = abs(res["count_in"] - gt_in) + abs(res["count_out"] - gt_out)
-            errors.append(count_error)
             measured = require_measured_timings(res["timings"])
             stats = compute_timing_stats(measured, res["source_fps"])
-            elapsed_list.append(stats["core_ms_total"])
+            errors_by_params[(s_low, s_high)].append(count_error)
+            elapsed_by_params[(s_low, s_high)].append(stats["core_ms_total"])
 
             # ── W&B: (s_low, s_high, video) の組ごとに 1 run（config + summary のみ）──
             dataset = Path(video).stem
@@ -418,6 +509,8 @@ def main() -> None:
                 "cleanup_threshold": CLEANUP_THRESHOLD,
                 "max_candidate_age": MAX_CANDIDATE_AGE,
                 "s_history_limit": S_HISTORY_LIMIT,
+                "detection_cached": True,
+                "detection_cache_id": detection_cache_id,
                 **reproducibility,
             }
             config["comparison_key"] = build_comparison_key(config)
@@ -496,26 +589,34 @@ def main() -> None:
             pd.DataFrame(res["diagnostics"]["in_candidate_tracks"]).to_csv(
                 diagnostics_dir / f"{config['execution_id']}.csv", index=False
             )
-            print(f"IN={res['count_in']} OUT={res['count_out']} err={count_error} "
-                  f"reset={res['tracker_reset_method']}")
+            print(f"  [{s_low:.2f}/{s_high:.2f}] IN={res['count_in']} OUT={res['count_out']} "
+                  f"err={count_error} reset={res['tracker_reset_method']}")
 
-        mae = sum(errors) / len(errors)
-        summary_rows.append({
-            "s_low":            s_low,
-            "s_high":           s_high,
-            "mae":              mae,
-            "mean_elapsed_ms":  sum(elapsed_list) / len(elapsed_list),
-        })
-        print(f"  → MAE={mae:.2f}\n")
-
-        # 逐次書き込み
+        # results.csv / events.csv は動画ごとに逐次書き込み（各行は書いた時点で確定値）
         pd.DataFrame(detail_rows).to_csv(out_dir / "results.csv", index=False)
-        pd.DataFrame(summary_rows).to_csv(out_dir / "mae_summary.csv", index=False)
         pd.DataFrame(event_rows, columns=list(EVENT_CSV_COLUMNS)).to_csv(
             out_dir / "events.csv", index=False
         )
+        print()
+
+    # mae_summary.csv は全動画処理後に1回だけ書く。動画外側ループでは各(s_low,s_high)の
+    # 平均が全動画分そろうまで確定しないため、逐次書き込みすると未確定の部分平均を
+    # 最終値と誤って読まれるリスクがある。
+    summary_rows = [
+        {
+            "s_low": lo,
+            "s_high": hi,
+            "mae": sum(errs) / len(errs),
+            "mean_elapsed_ms": sum(elapsed_by_params[(lo, hi)]) / len(elapsed_by_params[(lo, hi)]),
+        }
+        for (lo, hi), errs in errors_by_params.items() if errs
+    ]
+    pd.DataFrame(summary_rows).to_csv(out_dir / "mae_summary.csv", index=False)
 
     print(f"出力: {out_dir}")
+    if summary_rows:
+        best = min(summary_rows, key=lambda r: r["mae"])
+        print(f"MAE最小: s_low={best['s_low']:.2f} s_high={best['s_high']:.2f} mae={best['mae']:.2f}")
 
 
 if __name__ == "__main__":

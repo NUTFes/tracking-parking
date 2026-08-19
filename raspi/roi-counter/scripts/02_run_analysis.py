@@ -77,7 +77,7 @@ YOLO_TRACKER = os.getenv("YOLO_TRACKER", "botsort.yaml")
 WARMUP_FRAMES = validate_warmup_frames(os.getenv("WARMUP_FRAMES", DEFAULT_WARMUP_FRAMES))
 SAVE_VIDEO = os.getenv("SAVE_VIDEO", "true").lower() == "true"
 SHOW_DISPLAY = os.getenv("SHOW_DISPLAY", "true").lower() == "true"
-PROGRESS_METHOD = os.getenv("PROGRESS_METHOD", "y_normalized")
+PROGRESS_METHOD = os.getenv("PROGRESS_METHOD", "edge_distance")
 # ────────────────────────────────────────────────────────────────────────────
 
 WEBCAM_FPS = 30.0

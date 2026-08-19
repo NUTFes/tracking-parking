@@ -385,7 +385,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--progress-method",
-        default=os.environ.get("PROGRESS_METHOD", "y_normalized"),
+        default=os.environ.get("PROGRESS_METHOD", "edge_distance"),
         choices=["y_normalized", "edge_distance"],
         help="初期の等s線表示方式（表示のみ。設定には書き込まない）",
     )

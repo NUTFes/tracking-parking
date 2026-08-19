@@ -29,9 +29,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", default=str(OUTPUT_PATH), help="保存先PNGのパス")
     parser.add_argument(
         "--progress-method",
-        default=os.getenv("PROGRESS_METHOD", "y_normalized"),
+        default=os.getenv("PROGRESS_METHOD", "edge_distance"),
         choices=["y_normalized", "edge_distance"],
-        help="等s線の計算方式（既定は環境変数PROGRESS_METHOD、未設定ならy_normalized）",
+        help="等s線の計算方式（既定は環境変数PROGRESS_METHOD、未設定ならedge_distance）",
     )
     return parser.parse_args()
 

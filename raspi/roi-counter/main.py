@@ -19,9 +19,11 @@ from src.visualizer import draw_band_lines_for_method, draw_bbox_with_info, draw
 CONFIG_PATH = "data/inputs/configs/IMG_2787_gt.json"
 VEHICLE_CLASSES = [2, 7]  # COCO: 2=car, 7=truck
 
-# progress_methodは環境変数PROGRESS_METHODで上書き可能（既定y_normalizedで
-# 従来どおりの挙動）。scripts/04_multi_video_mae.py:105と同じ流儀。
-PROGRESS_METHOD = os.getenv("PROGRESS_METHOD", "y_normalized")
+# progress_methodは環境変数PROGRESS_METHODで上書き可能（既定edge_distance。
+# 画角非依存性を優先する。過去のy_normalized運用と比較する場合は
+# PROGRESS_METHOD=y_normalizedを明示指定する）。scripts/04_multi_video_mae.py:105
+# と同じ流儀。
+PROGRESS_METHOD = os.getenv("PROGRESS_METHOD", "edge_distance")
 # ────────────────────────────────────────────────────────────────────────────
 
 

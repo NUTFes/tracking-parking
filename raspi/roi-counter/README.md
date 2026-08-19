@@ -53,12 +53,15 @@ GUIで決めたROIはこの3本すべてに反映される（`02`/`03`は対象�
 | `CLEANUP_THRESHOLD` | 未更新trackを削除またはarchiveへ移すまでのフレーム数（既定150） |
 | `MAX_CANDIDATE_AGE` | 候補状態を維持する最大フレーム数（既定300） |
 | `S_HISTORY_LIMIT` | trackごとに保持する`s_history`の最大件数（既定300、0は無制限） |
-| `PROGRESS_METHOD` | 進行度計算方式（`y_normalized`または`edge_distance`、既定`y_normalized`）。環境変数でも指定可能 |
+| `PROGRESS_METHOD` | 進行度計算方式（`y_normalized`または`edge_distance`、既定`edge_distance`）。環境変数でも指定可能 |
 | `VEHICLE_CLASSES` | 検出対象クラス（COCO: `2`=car, `7`=truck） |
 
 ROIの4頂点は「奥側左、奥側右、入口側右、入口側左」の順序で指定する。
 `y_normalized`は従来どおりROI全体のy範囲で正規化し、`edge_distance`は入口辺から奥辺への
-透視変換距離で正規化する。既定方式は互換性のため`y_normalized`である。
+透視変換距離で正規化する。既定方式は`edge_distance`である（画角非依存性を優先。
+ROIを路面の同じ物理目印に打ち直せば、画角が変わる設置のたびに`s_low`/`s_high`を
+再検証しなくて済む。過去の`y_normalized`運用と比較する場合は
+`PROGRESS_METHOD=y_normalized`を明示指定する）。
 
 ## roi_setup/setup_roi.py — ROI4頂点の手動決定
 
@@ -149,7 +152,7 @@ ROIを同じ物理領域（路面の白線の端・縁石・車止めなど）�
 
 **入力**: `--config`（設定JSON。既定`data/inputs/configs/IMG_2787_gt.json`）、
 `--seek-sec`、`--progress-method`（既定は環境変数`PROGRESS_METHOD`、
-未設定なら`y_normalized`）
+未設定なら`edge_distance`）
 
 **出力**: `data/outputs/roi_check.png`（`--output`で変更可。確認用・描画済み画像。
 `roi_setup/setup_roi.py`が保存するクリーンな参照フレームとは別物）
@@ -186,8 +189,9 @@ ROIを同じ物理領域（路面の白線の端・縁石・車止めなど）�
 リアルタイム判定に使う。先頭 `WARMUP_FRAMES`（既定30）は処理自体には含めるが、
 速度 summary から除外する。
 
-`PROGRESS_METHOD=edge_distance`を指定すると、台形や回転したROIでも入口辺から奥辺への
-進行度を計算できる。方式名はW&B config、manifest、`result.json`の`progress_method`に記録する。
+既定の`edge_distance`は、台形や回転したROIでも入口辺から奥辺への進行度を計算する
+（画角非依存）。過去の`y_normalized`運用と比較する場合は`PROGRESS_METHOD=y_normalized`
+を明示する。方式名はW&B config、manifest、`result.json`の`progress_method`に記録する。
 
 主な速度比較用環境変数:
 
@@ -298,10 +302,19 @@ frame_index, timestamp_sec, is_warmup` に、どのパラメータ・動画のru
 track IDが再利用された場合も、過去のarchiveイベントと新しいactiveイベントを別行として保存する。
 
 `results.csv`には`tracker_reset`、`tracker_reset_method`、`ultralytics_version`も
-記録する。`03_sweep_params.py`と同じ共通処理を使い、動画・閾値の各runを独立させる。
-`USE_WANDB=true`の場合は`wandb_run_id`、`execution_id`、`condition_key`と互換用
+記録する。`USE_WANDB=true`の場合は`wandb_run_id`、`execution_id`、`condition_key`と互換用
 `exp_key`も記録する。W&Bを無効にした場合も`manifests/`には各runの識別子と
 再現情報が残る。
+
+**動画ごとにYOLO推論を1回だけ実行し、閾値ごとのカウントロジックはそのキャッシュを
+再生する。**検出結果（バウンディングボックス・track_id）は`s_low`/`s_high`に依存しない
+ため、動画1本を`build_detection_trace()`で1回だけ処理し、`(s_low, s_high)`の組み合わせ
+ごとには軽量な`replay_counts()`だけを繰り返す。tracker初期化（`prepare_model_for_run`）
+も動画ごとに1回。W&B run・manifestの粒度は従来どおり`(s_low, s_high, video)`単位のまま
+だが、同じ動画に属する全runのconfigには`detection_cached: true`と、同一キャッシュ由来の
+runをグルーピングする`detection_cache_id`が記録される——これらのrunの`read_ms`/
+`inference_tracking_ms`は動画単位で共有された実測値であり、統計的に独立ではないことを
+示す（`counting_logic_ms`は各runで新規に計測される）。
 
 tracker初期化処理はUltralyticsの内部APIに依存するため、依存バージョンは
 `8.4.72`に固定している。バージョン更新時は`test_tracker_lifecycle.py`を含む
