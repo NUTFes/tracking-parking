@@ -6,10 +6,12 @@ import pytest
 
 from src.progress import (
     PROGRESS_METHODS,
+    _validate_roi_points,
     calc_s,
     calc_s_edge_distance,
     calc_s_y_normalized,
     get_progress_fn,
+    validate_roi_points,
 )
 
 
@@ -71,3 +73,7 @@ def test_progress_method_registry_and_validation():
         get_progress_fn("unknown")
     with pytest.raises(ValueError):
         calc_s_edge_distance((0.0, 0.0), [(0, 0), (1, 0), (1, 1)])
+
+
+def test_validate_roi_points_public_alias():
+    assert _validate_roi_points is validate_roi_points

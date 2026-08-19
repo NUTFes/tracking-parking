@@ -22,7 +22,11 @@ def calc_s_y_normalized(y: float, y_min: float, y_max: float) -> float:
     return (y_max - y) / (y_max - y_min)
 
 
-def _validate_roi_points(roi_points: RoiPoints) -> np.ndarray:
+def validate_roi_points(roi_points: RoiPoints) -> np.ndarray:
+    """4頂点・数値・有限であることだけを検証する（順序・凸性は見ない）。
+
+    順序・凸性の検証は src/roi.py の check_roi_geometry が担う。
+    """
     if len(roi_points) != 4:
         raise ValueError("ROIは4頂点で指定する必要があります")
     try:
@@ -41,7 +45,7 @@ def calc_s_edge_distance(point: Point, roi_points: RoiPoints) -> float:
     入口辺をs=0、奥辺をs=1へ写像する。ROI外の点では0未満または1超の
     値を返すことがあるが、検出処理ではROI内の点だけを渡す。
     """
-    points = _validate_roi_points(roi_points)
+    points = validate_roi_points(roi_points)
     try:
         point_array = np.asarray(point, dtype=np.float32)
     except (TypeError, ValueError) as exc:
@@ -63,7 +67,7 @@ def calc_s_edge_distance(point: Point, roi_points: RoiPoints) -> float:
 
 
 def _calc_s_y_normalized_from_point(point: Point, roi_points: RoiPoints) -> float:
-    points = _validate_roi_points(roi_points)
+    points = validate_roi_points(roi_points)
     y_min = float(points[:, 1].min())
     y_max = float(points[:, 1].max())
     return calc_s_y_normalized(float(point[1]), y_min, y_max)
@@ -86,3 +90,7 @@ def get_progress_fn(name: str) -> ProgressFn:
 
 # 既存のテストとscripts/03_sweep_params.py向けの後方互換alias。
 calc_s = calc_s_y_normalized
+
+# src/roi_config.py・src/roi.py（roi_setup/）向けの公開名。旧名は内部・外部の
+# 呼び出し互換のために残す。
+_validate_roi_points = validate_roi_points
