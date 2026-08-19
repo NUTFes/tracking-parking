@@ -7,42 +7,133 @@ ROI内を通過する車両の進行度 `s` を用いて入庫・出庫を判定
 ```
 roi-counter/
 ├── src/                    # コアモジュール
-│   ├── roi.py              # ROI判定・y範囲取得
-│   ├── progress.py         # 進行度 s の計算方式とレジストリ
+│   ├── roi.py              # ROI判定・y範囲取得・頂点順序と凸性の検証
+│   ├── roi_config.py       # 設定JSON（roi/roi_setup）の読み書き
+│   ├── progress.py         # 進行度 s の計算方式とレジストリ・等s線の幾何
 │   ├── progress_diagnostics.py # s_max診断集計
 │   ├── tracker.py          # 車両状態データクラス
 │   ├── tracker_lifecycle.py # run間のYOLO tracker状態初期化
 │   ├── counter.py          # 状態機械・入出庫カウント
 │   └── visualizer.py       # フレーム描画
+├── roi_setup/
+│   └── setup_roi.py        # GUIでROI4頂点を手動決定するツール
 ├── scripts/
 │   ├── 00_convert_fps.py   # FPS変換
-│   ├── 01_show_roi.py      # ROI確認（静止フレーム）
-│   ├── 02_run_analysis.py  # 1動画の詳細分析
-│   ├── 03_sweep_params.py  # 1動画 × 閾値スイープ
-│   └── 04_multi_video_mae.py  # 複数動画 × 閾値 → MAE
+│   ├── 01_show_roi.py      # ROI確認（静止フレーム、設定JSON読み込み）
+│   ├── 02_run_analysis.py  # 1動画の詳細分析（ROIハードコード）
+│   ├── 03_sweep_params.py  # 1動画 × 閾値スイープ（ROIハードコード）
+│   └── 04_multi_video_mae.py  # 複数動画 × 閾値 → MAE（設定JSON読み込み）
 ├── analysis/
 │   └── 01_visualize_threshold_sweep.py  # スイープ結果の可視化
 ├── tests/                  # ユニットテスト
-└── main.py                 # 本番推論
+└── main.py                 # 本番推論（設定JSON読み込み）
 ```
 
-## パラメータ（各スクリプト先頭でハードコード）
+## パラメータ
+
+ROIとその周辺の値は、スクリプトによって設定JSON経由とハードコードの2通りがある。
+
+| スクリプト | ROI・s_low/s_highの出所 |
+|---|---|
+| `roi_setup/setup_roi.py`、`main.py`、`scripts/01_show_roi.py` | **設定JSON**（`--config`。既定`data/inputs/configs/IMG_2787_gt.json`） |
+| `scripts/02_run_analysis.py`、`scripts/03_sweep_params.py` | **ハードコード**（スクリプト先頭。実験時に手で値を振る用途のため据え置き） |
+| `scripts/04_multi_video_mae.py` | **設定JSON**（`GT_DIR`配下の複数ファイル） |
+
+`main.py`・`01_show_roi.py`・`04_multi_video_mae.py`が同じ設定JSONを読むため、
+GUIで決めたROIはこの3本すべてに反映される（`02`/`03`は対象外。ハードコードされた
+値を手で書き換える必要がある）。
+
+設定JSONの外にある、スクリプト先頭ハードコードのパラメータ:
 
 | パラメータ | 説明 |
 |---|---|
-| `VIDEO_SOURCE` | 動画ファイルパスまたはカメラインデックス（`0` 等） |
-| `ROI_POINTS` | ROIの4頂点（画素座標，左上から時計回り） |
-| `S_LOW` | 入口側バンドの上限（`s < S_LOW` → 入口側） |
-| `S_HIGH` | 奥側バンドの下限（`s > S_HIGH` → 奥側） |
+| `VIDEO_SOURCE` | （`02`/`03`のみ）動画ファイルパスまたはカメラインデックス（`0` 等） |
+| `ROI_POINTS` | （`02`/`03`のみ）ROIの4頂点（画素座標） |
+| `S_LOW` / `S_HIGH` | （`02`/`03`のみ）入口側/奥側バンドの閾値 |
 | `CLEANUP_THRESHOLD` | 未更新trackを削除またはarchiveへ移すまでのフレーム数（既定150） |
 | `MAX_CANDIDATE_AGE` | 候補状態を維持する最大フレーム数（既定300） |
 | `S_HISTORY_LIMIT` | trackごとに保持する`s_history`の最大件数（既定300、0は無制限） |
-| `PROGRESS_METHOD` | 進行度計算方式（`y_normalized`または`edge_distance`、既定`y_normalized`） |
+| `PROGRESS_METHOD` | 進行度計算方式（`y_normalized`または`edge_distance`、既定`y_normalized`）。環境変数でも指定可能 |
 | `VEHICLE_CLASSES` | 検出対象クラス（COCO: `2`=car, `7`=truck） |
 
-`ROI_POINTS`は「奥側左、奥側右、入口側右、入口側左」の順序で指定する。
+ROIの4頂点は「奥側左、奥側右、入口側右、入口側左」の順序で指定する。
 `y_normalized`は従来どおりROI全体のy範囲で正規化し、`edge_distance`は入口辺から奥辺への
 透視変換距離で正規化する。既定方式は互換性のため`y_normalized`である。
+
+## roi_setup/setup_roi.py — ROI4頂点の手動決定
+
+画角は検証時のものとは限らず、微小に変化しうる。そのたびに`04_multi_video_mae.py`の
+ようなスイープスクリプトを回すのは非現実的なため、ROIの4頂点だけは
+`line_detection/line_setup/setup_lines.py`と同様にGUIで手動決定する。
+
+```bash
+uv run python roi_setup/setup_roi.py --config data/inputs/configs/IMG_2787_gt.json
+```
+
+**このツールが編集するのはROI4頂点だけ**。`s_low`/`s_high`は設定JSONから読んで
+確認表示するのみで、書き込まない。無次元の進行度閾値はROI形状に依存しないので、
+ROIを同じ物理領域（路面の白線の端・縁石・車止めなど）に打ち直せば、画角が変わっても
+`s_low`/`s_high`はスイープで検証した値のまま使い続けられる、という設計方針による。
+
+**操作**: 動画/カメラの1フレームを表示し、奥側左→奥側右→入口側右→入口側左の順で
+4点をクリックする（既存の点はドラッグで移動可）。`.`/`,`で1秒、`]`/`[`で10秒シークでき
+（カメラ入力では無効、`space`キーで再取得）、`m`で表示方式（y_normalized/edge_distance）
+をトグルできる（表示のみ）。4点そろうと頂点の順序・凸性を検証し、エラーは赤、警告は
+黄でオーバーレイする。`s`キーで明示的に保存する（ウィンドウを閉じるだけでは保存しない）。
+
+**保存されるもの**:
+- クリーンな参照フレーム（ROI線等を焼き込んでいない生のフレーム）を
+  `data/inputs/reference_frames/{video_stem}_{timestamp}.png`として保存する。
+  `01_show_roi.py`が出す`data/outputs/roi_check.png`（確認用・描画済み）とは別物。
+- 設定JSONの`roi`と`roi_setup`キーだけを更新する。`in`/`out`/`events`/
+  `tolerance_sec`・未知キーはそのまま保持する。
+
+**設定JSONの`roi_setup`スキーマ**:
+```json
+{
+  "video": "data/inputs/IMG_2787.MOV",
+  "roi": [[690, 430], [1310, 430], [1550, 660], [500, 660]],
+  "in": 22,
+  "out": 0,
+  "roi_setup": {
+    "schema_version": 1,
+    "vertex_order": ["far_left", "far_right", "near_right", "near_left"],
+    "coordinate_space": "pixel",
+    "frame_width": 1920,
+    "frame_height": 1080,
+    "baseline_roi": [[690, 430], [1310, 430], [1550, 660], [500, 660]],
+    "reference_frame": {
+      "path": "data/inputs/reference_frames/IMG_2787_20260819_213011.png",
+      "sha256": "…",
+      "source": "data/inputs/IMG_2787.MOV",
+      "source_type": "file",
+      "source_sha256": "…",
+      "frame_index": 150,
+      "position_sec": 5.004
+    },
+    "set_at": "2026-08-19T21:30:11+09:00",
+    "set_by": "ycn",
+    "tool": "roi_setup/setup_roi.py"
+  }
+}
+```
+
+`baseline_roi`は人が打った原本を保持する予約フィールド。将来ホモグラフィによる
+画角の自動追従（層2）を足す場合、そのランタイム出力は`roi_alignment`という
+兄弟トップレベルキーに置く想定で、`roi_setup`（人間とこのツールだけが書く）とは
+書き手を分離する。`roi`は常に「いま使うROI」を指すので、層2を追加しても
+`main.py`・`01_show_roi.py`・`04_multi_video_mae.py`側の読み込みコードは
+変更不要になる。現時点では`roi_alignment`は未実装。
+
+**`condition_key`への影響**: `roi_setup`の追加はJSONファイル全体のバイト列を
+変えるため、`common.ground_truth.GroundTruth.sha256`（ひいては
+`04_multi_video_mae.py`が生成する`condition_key`）が変わる。これは
+`roi_points`が既に`condition_key`の入力に含まれている以上、ROIの再設定という
+条件変更に伴う想定内の挙動であり、避けるべきものではない。ROIを動かしていない
+状態で保存を繰り返しても`roi_setup`が既に付与済みなら書き込み自体をスキップする
+（`src.roi_config.roi_points_changed`）ため、無意味な`set_at`更新でkeyが
+動くことはない。過去runと比較する場合は`roi_points`と`s_low`/`s_high`を
+手で突き合わせること。
 
 ## scripts/ 各スクリプトの用途と入力
 
@@ -56,9 +147,15 @@ roi-counter/
 ### 01_show_roi.py
 動画の指定秒数地点のフレームにグリッド・ROI・バンドラインを描画して確認する．
 
-**入力**: `VIDEO_SOURCE`，`ROI_POINTS`，`S_LOW`，`S_HIGH`
+**入力**: `--config`（設定JSON。既定`data/inputs/configs/IMG_2787_gt.json`）、
+`--seek-sec`、`--progress-method`（既定は環境変数`PROGRESS_METHOD`、
+未設定なら`y_normalized`）
 
-**出力**: `data/outputs/roi_check.png`
+**出力**: `data/outputs/roi_check.png`（`--output`で変更可。確認用・描画済み画像。
+`roi_setup/setup_roi.py`が保存するクリーンな参照フレームとは別物）
+
+起動時に`src.roi.check_roi_geometry`でROIの妥当性を検証し、エラー/警告を
+標準出力に表示する（頂点順序の誤りなどを動画を開く前に検出できる）。
 
 ---
 
@@ -177,6 +274,11 @@ s_low, s_high, count_in, count_out, gt_in, gt_out, count_error, elapsed_ms, mean
 }
 ```
 
+`roi_setup/setup_roi.py`で保存すると`s_low`/`s_high`（GUIは書き込まない、
+`02`/`03`のように手で足す場合のみ）や`roi_setup`メタデータが追加されることがあるが、
+`load_configs`は未知キーをそのまま保持するため`04`の処理には影響しない
+（詳細は「roi_setup/setup_roi.py — ROI4頂点の手動決定」を参照）。
+
 **出力**: `data/outputs/{EXP_NAME}/mae_{timestamp}/`
 ```
 ├── results.csv      # 動画 × パラメータごとの詳細
@@ -220,3 +322,13 @@ ROI counterのテストを実行すること。
 **入力**: `SWEEP_CSV`（`results.csv` のパス）
 
 **出力**: 同ディレクトリに `heatmap_count_error.png`，`line_s_low.png`，`line_s_high.png`，`heatmap_elapsed_ms.png`
+
+---
+
+## 既知の問題
+
+- `main.py`（本番推論）は`counter.cleanup()`を一度も呼んでいない
+  （`02_run_analysis.py`・`04_multi_video_mae.py`は毎フレーム呼ぶ）。24/7で
+  動かし続けるとstale trackが`Counter.tracks`に無制限に蓄積する可能性がある。
+  カウントの意味論に触れる修正のため、ROI設定GUI（層1）の導入時点では
+  意図的に直していない。
