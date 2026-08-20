@@ -20,6 +20,33 @@ ROIカウントロジックが期待どおり動くことを、実動画1本に�
 
 以降のコマンドは断りがない限り `raspi/roi-counter/` をカレントディレクトリとして書く。
 
+### W&B（実験記録）について
+
+本手順の実行コマンドは `WANDB_MODE=offline` で書いてある。**オフライン記録は
+W&Bへのログイン無しで動く**（ローカルに run ディレクトリが作られるだけ）。
+
+W&Bサーバへ実際にアップロードするには、事前にログインが必要。
+
+```bash
+wandb login          # 初回のみ。ブラウザでAPIキーを取得して貼り付ける
+```
+
+ログイン状態は次で確認できる。
+
+```bash
+grep -q "api.wandb.ai" ~/.netrc && echo "ログイン済み" || echo "未ログイン"
+```
+
+未ログインのままでも検証手順そのものは完走する。ただし**offline runはローカルに
+溜まり続けるだけで、W&B上では一切参照できない**。manifestに記録される
+`wandb_run_id` も、同期するまではW&B上に対応する実体が無い点に注意すること。
+
+同期は後からまとめて実行できる。
+
+```bash
+wandb sync data/outputs/wandb/offline-run-<timestamp>-<run_id>
+```
+
 ### 進行度方式について
 
 進行度 `s` の計算方式は `PROGRESS_METHOD` で切り替わる。**既定は `edge_distance`**。
@@ -119,10 +146,16 @@ GT付き動画に対して閾値の組み合わせを総当たりし、MAE（cou
 ```bash
 ls data/inputs/configs/          # 対象JSONを目視確認（意図しないファイルの混入がないか）
 
-USE_WANDB=true WANDB_MODE=offline WANDB_PROJECT=tracking-parking \
+USE_WANDB=true WANDB_MODE=offline WANDB_DIR=data/outputs \
+  WANDB_PROJECT=tracking-parking \
   EXP_NAME=exp_edge_distance_sweep \
   uv run python scripts/04_multi_video_mae.py
 ```
+
+> **`WANDB_DIR=data/outputs` を省略しないこと。** `raspi/common/wandb_logger.py` の
+> `wandb.init()` は `dir` を渡していないため、未指定だとwandbが**カレントディレクトリ直下**に
+> `wandb/` を作る。`data/` の外に出るとgitignoreの対象外になり、run一式を失いやすい
+> （実際に一度失っている。11章参照）。
 
 起動直後に `動画数: N  パラメータ組み合わせ: M` が出る。既定グリッドは
 `S_LOW_LIST` 9値 × `S_HIGH_LIST` 9値 = 81通り。
@@ -263,7 +296,29 @@ uv run python scripts/05_build_accuracy_report.py \
 - **`main.py` の長時間安定性**。`counter.cleanup()` を呼んでいないため、24/7運用では
   stale trackが蓄積しうる（`README.md` の「既知の問題」参照）
 
-## 11. 関連資料
+## 11. 過去に踏んだ失敗（再発防止）
+
+### W&B offline run を失った例（2026-08-20）
+
+`WANDB_DIR` を指定せずにスイープを実行したため、run一式が `raspi/roi-counter/wandb/`
+（`data/` の外）に生成された。その後 `git worktree remove --force` を実行した際、
+`data/` はシンボリックリンクだったため manifest 類は残ったが、`wandb/` は実ディレクトリ
+だったので**一緒に削除された**。
+
+結果、manifestに記録された `wandb_run_id` の実体だけが失われ、参照が切れた。
+
+対策として次の3点を守る。
+
+1. スイープ実行時は必ず `WANDB_DIR=data/outputs` を付ける（4章）
+2. `wandb login` を済ませ、区切りのよいところで `wandb sync` する。offline runは
+   同期するまでローカルにしか存在しない
+3. worktreeを削除する前に、`data/` の外に成果物が無いか確認する
+
+```bash
+find . -maxdepth 2 -type d -name wandb -not -path "./data/*"   # 何も出なければOK
+```
+
+## 12. 関連資料
 
 - `README.md` — ディレクトリ構造、設定JSONのスキーマ、`condition_key` への影響、
   s_low/s_high 書き戻し履歴、既知の問題

@@ -342,11 +342,32 @@ ROI counterのテストを実行すること。
   `EXP_NAME=exp_edge_distance_sweep_confirm`）し、全9通りでMAE=0であることを
   確認した上で、崖（`s_high=0.60`）から十分な余裕を持つ`s_high=0.45`と、
   確認済みの安全域の中央付近にあたる`s_low=0.20`を採用した。
-  該当run: `manifests/717ce43a-04f5-4fcc-9d4f-e24798e8a907.json`
-  （W&B run: `a0gex1oc`、`condition_key=ck1_46c006ecdbb82c7edb90785fda82900fd8c91cbaafcea616f2645d0025377279`、
-  `git_sha=d0c612cfeb0c64f17f5dd4c3bc51f831212a973a`）。
-  W&Bプロジェクト`tracking-parking`、group `roi_counter`内で`condition_key`に
-  より検索可能（オフラインrunのため`wandb sync`でのアップロードが未実施）。
+  **採用値の参照run**（`EXP_NAME=exp_edge_distance_adopted`、採用した
+  `s_low=0.20`/`s_high=0.45`のみを再実行して取得した確定run）:
+
+  | 項目 | 値 |
+  |---|---|
+  | manifest | `data/outputs/exp_edge_distance_adopted/mae_20260820_182314/manifests/990020a9-3b66-4d77-b821-4ca812ba50be.json` |
+  | `execution_id` | `990020a9-3b66-4d77-b821-4ca812ba50be` |
+  | `wandb_run_id` | `t3u16nn6`（offline: `data/outputs/wandb/offline-run-20260820_183535-t3u16nn6`） |
+  | `condition_key` | `ck1_9225ee2ab1d3e34070ae325a8bbcea1805897491106aba8d34fafd865436bcfe` |
+  | `git_sha` | `19b58fa229629001bbbf07a48ac23da71b6705be` |
+  | 結果 | `IN=22 OUT=0 count_error=0` |
+
+  > **注記1**: 選定の過程で実行した3段階のスイープ
+  > （`exp_edge_distance_sweep` / `_refine` / `_confirm`）は、`WANDB_DIR`を指定せずに
+  > 実行したためW&Bのrunディレクトリが`data/`の外に生成され、その後のworktree削除で
+  > 失われた。上表はそれを受けて採用値のみを`WANDB_DIR=data/outputs`付きで
+  > 実行し直した確定runを指す。各スイープの`manifests/`・`mae_summary.csv`自体は
+  > `data/outputs/`配下に残っており、選定の再現性は保たれている。
+  > 詳細と再発防止策は`VERIFICATION.md`の11章。
+  >
+  > **注記2**: このrunの`git_dirty`は`true`（`VERIFICATION.md`編集中に実行したため）。
+  > カウント結果・閾値・ROIには影響しないが、速度値を厳密に比較する用途には使わないこと。
+  >
+  > **注記3**: offline runのため**W&Bサーバへは未アップロード**。`wandb login`後に
+  > `wandb sync data/outputs/wandb/offline-run-20260820_183535-t3u16nn6`で同期できる。
+
   **既知の限界**: GTが`out=0`の1本のみのため、OUT方向の閾値妥当性は未検証。
 
 ---
