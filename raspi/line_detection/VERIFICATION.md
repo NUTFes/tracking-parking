@@ -20,6 +20,32 @@ ROI方式の検証手順は `raspi/roi-counter/VERIFICATION.md`（`feat/mike/89-
 
 以降のコマンドは断りがない限り `raspi/line_detection/` をカレントディレクトリとして書く。
 
+### W&B（実験記録）について
+
+速度比較（6章）は `WANDB_MODE=offline` で実行する。**オフライン記録はW&Bへの
+ログイン無しで動く**（ローカルに run ディレクトリが作られるだけ）。
+
+W&Bサーバへ実際にアップロードするには、事前にログインが必要。
+
+```bash
+wandb login          # 初回のみ。ブラウザでAPIキーを取得して貼り付ける
+```
+
+ログイン状態は次で確認できる。
+
+```bash
+grep -q "api.wandb.ai" ~/.netrc && echo "ログイン済み" || echo "未ログイン"
+```
+
+未ログインのままでも検証手順そのものは完走する。ただし**offline runはローカルに
+溜まり続けるだけで、W&B上では一切参照できない**。manifestに記録される
+`wandb_run_id` も、同期するまではW&B上に対応する実体が無い点に注意すること。
+
+> **`WANDB_DIR=data/outputs` を省略しないこと。** `raspi/common/wandb_logger.py` の
+> `wandb.init()` は `dir` を渡していないため、未指定だとwandbが**カレントディレクトリ直下**に
+> `wandb/` を作る。`data/` の外に出るとgitignoreの対象外になり、run一式を失いやすい
+> （ROI方式で実際に一度失っている）。
+
 ## 1. ユニットテスト
 
 実データを流す前に、純ロジックが壊れていないことを確認する。
@@ -183,11 +209,14 @@ print('git_dirty     :', c['git_dirty'])
 
 **合格基準**: `git_dirty` が `false` であること（作業ツリーが汚れた状態で計測していない）。
 
-offline run は後日アップロードできる。
+offline run は後日アップロードできる（`wandb login` 済みであること。0章参照）。
 
 ```bash
-wandb sync <run_dir>
+wandb sync data/outputs/wandb/offline-run-<timestamp>-<run_id>
 ```
+
+同期していない run は、manifest に `wandb_run_id` が記録されていてもW&B上には存在しない。
+区切りのよいところでまとめて同期しておくこと。
 
 ## 7. イベント単位の精度評価
 
