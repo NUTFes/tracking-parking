@@ -365,8 +365,12 @@ ROI counterのテストを実行すること。
   > **注記2**: このrunの`git_dirty`は`true`（`VERIFICATION.md`編集中に実行したため）。
   > カウント結果・閾値・ROIには影響しないが、速度値を厳密に比較する用途には使わないこと。
   >
-  > **注記3**: offline runのため**W&Bサーバへは未アップロード**。`wandb login`後に
-  > `wandb sync data/outputs/wandb/offline-run-20260820_183535-t3u16nn6`で同期できる。
+  > **注記3**: このrunは**W&Bへ同期済み**（2026-08-23）。W&Bプロジェクト
+  > `tracking-parking`、group `roi_counter` 内で上記 `condition_key` により検索できる。
+  > なお選定過程を含むそれ以前のoffline run（2ライン9件・ROI 6件、08-09〜08-16）は
+  > 未同期のまま。いずれも`y_normalized`時代の計測で現在の既定（`edge_distance`）とは
+  > 条件が違い、W&B上で直接比較できないため意図的に同期していない。必要になった場合は
+  > `data/outputs/wandb/` 配下から個別に`wandb sync`する。
 
   **既知の限界**: GTが`out=0`の1本のみのため、OUT方向の閾値妥当性は未検証。
 
