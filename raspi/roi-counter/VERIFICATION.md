@@ -22,6 +22,12 @@ ROIカウントロジックが期待どおり動くことを、実動画1本に�
 
 ### W&B（実験記録）について
 
+**一次記録はローカル成果物であり、W&Bは二次的な閲覧先である。**
+`manifests/{execution_id}.json` は `USE_WANDB` の値に関係なく書かれ、
+`results.csv`、`mae_summary.csv`、`events.csv`、`frames.csv` も同様に残る。
+W&Bを無効にしても、方式の比較と再現に必要な数値は失われない。
+この前提を保つ限り、W&B側の障害が検証の進行を止めることはない。
+
 本手順の実行コマンドは `WANDB_MODE=offline` で書いてある。**オフライン記録は
 W&Bへのログイン無しで動く**（ローカルに run ディレクトリが作られるだけ）。
 
@@ -46,6 +52,43 @@ grep -q "api.wandb.ai" ~/.netrc && echo "ログイン済み" || echo "未ログ�
 ```bash
 wandb sync data/outputs/wandb/offline-run-<timestamp>-<run_id>
 ```
+
+### `WANDB_MODE=online` を採用しない理由（2026-08-26 決定）
+
+`online` は使わない。
+ネットワークへ到達できない環境で `wandb.init()` がハングし、検証そのものが進まなくなるため。
+
+2026-08-25 に wandb 0.28.0 で実測した結果を示す。
+`WANDB_BASE_URL` を到達不能な宛先へ差し替えて、ネットワーク断の2つの形（DNS解決の失敗、接続拒否）を再現した。
+
+| 条件 | 結果 |
+|---|---|
+| `WANDB_MODE=offline` + 到達不能 | 0.5秒で init 成功。`offline-run-…` が生成される |
+| `WANDB_MODE=online` + 接続拒否 | 4分を超えてブロック（100秒で強制終了） |
+| `WANDB_MODE=online` + DNS解決失敗 | 100秒を超えてブロック |
+| 上記に `WANDB_INIT_TIMEOUT=15` | 効かない（ブロックが続く） |
+| 上記に `wandb.Settings(init_timeout=10)` | 効かない（ブロックが続く） |
+| 上記に `wandb.Settings(x_graphql_retry_max=1)` | 19.2秒で `wandb.errors.errors.Error` を送出 |
+
+`init_timeout` は既定90秒が設定されているにもかかわらず、この失敗形態では発火しなかった。
+リトライを打ち切るには `x_graphql_retry_max`（`x_` 接頭辞は内部オプション）に頼るしかない。
+
+打ち切って例外を上げた場合、現在の実装では計測が丸ごと失われる。
+`common/wandb_logger.py` の `wandb.init()` は try/except で包んでおらず、
+`ExperimentLogger` の生成は `scripts/02_run_analysis.py` の `try:` より前にある。
+例外は `try`/`finally` の外側で発生するので、1フレームも処理しないまま終了し、
+`run_manifest.json` も残らない。
+
+`offline` にはこの問題が無い。
+ネットワークの不在が正常系だからである。
+アップロードは `wandb sync` で任意のタイミングに行える。
+
+将来 `online` へ切り替える場合は、`wandb.init()` を try/except で包み、
+失敗時は `enabled=False` へ降格して計測本体を続行する改修が前提になる。
+`ExperimentLogger` は `enabled=False` で完全な no-op になるため、降格の受け皿は既にある。
+
+なお init 成功後に切断された場合の挙動は確認していない。
+wandbはローカルへバッファして再送する設計だが、`finish()` でのフラッシュ待ちを含めて未検証である。
 
 ### 進行度方式について
 
@@ -186,6 +229,24 @@ S_LOW_LIST=0.15,0.20,0.25 S_HIGH_LIST=0.40,0.45,0.50 \
 
 実行末尾に `MAE最小: s_low=X s_high=Y mae=Z` が表示される。
 
+### 実行後の同期
+
+run が完走したらW&Bへ同期する。
+offline run は同期するまでローカルにしか存在せず、manifestに記録された
+`wandb_run_id` は参照先を持たないままになる。
+
+```bash
+wandb sync data/outputs/wandb/offline-run-<timestamp>-<run_id>
+```
+
+未同期の run は次で一覧できる（同期済みの run には `*.wandb.synced` が置かれる）。
+
+```bash
+for d in data/outputs/wandb/offline-run-*; do
+  find "$d" -maxdepth 1 -name '*.wandb.synced' | grep -q . || echo "未同期: $d"
+done
+```
+
 ### 閾値の選び方
 
 **MAE最小の値をそのまま採るのではなく、同点集合の形を見ること。**
@@ -245,13 +306,26 @@ uv run python main.py --config data/inputs/configs/IMG_2787_gt.json
 
 **合格基準**: 書き戻した閾値でGT（`in=22`, `out=0`）と一致すること。
 
+> `main.py` はW&Bへ記録しない。
+> これは実装漏れではなく決定である（2026-08-26）。
+> 本番推論をW&Bへ繋ぐと、ネットワーク断が入出庫カウントの停止に直結する。
+> 24/7で動く監視系にその依存を持ち込まない、という判断による。
+> 実運用データの記録が必要になった場合は、0章に書いた降格処理を実装した上で改めて判断する。
+
 ## 7. 1動画の詳細分析（任意）
 
 軌跡・処理時間・アノテーション動画が必要なときに使う。
 
 ```bash
-uv run python scripts/02_run_analysis.py
+USE_WANDB=true WANDB_MODE=offline WANDB_DIR=data/outputs \
+  WANDB_PROJECT=tracking-parking \
+  uv run python scripts/02_run_analysis.py
 ```
+
+`02_run_analysis.py` はROI方式で唯一フレーム単位の時系列を記録できるスクリプトである
+（`04_multi_video_mae.py` は config と summary のみ）。
+W&Bを無効にすると、この時系列はどこにも残らない。
+完走したら4章と同じ手順で `wandb sync` する。
 
 > **注意**: このスクリプトは `VIDEO_SOURCE` / `ROI_POINTS` / `S_LOW` / `S_HIGH` が
 > **スクリプト先頭にハードコード**されており、設定JSONを読まない（実験時に手で値を
@@ -284,6 +358,7 @@ uv run python scripts/05_build_accuracy_report.py \
 | 本実行 | `入庫: 22　出庫: 0`（GTと一致） |
 | 書き戻し | JSON構文OK、`load_roi_config` が新しい値を返す |
 | トレーサビリティ | README に選定根拠を追記済み |
+| W&B同期 | 未同期の offline run が残っていないこと（4章） |
 
 ## 10. この手順で確認できないこと
 

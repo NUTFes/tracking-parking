@@ -387,6 +387,44 @@ ROI counterのテストを実行すること。
 
 ---
 
+## W&Bの運用方針
+
+2026-08-26に次の4点を決定した。根拠となる実測は`VERIFICATION.md`の0章にある。
+
+**一次記録はローカル成果物、W&Bは二次的な閲覧先**。
+`manifests/{execution_id}.json`は`USE_WANDB`の値に関係なく書かれ、
+`results.csv`、`mae_summary.csv`、`events.csv`、`frames.csv`も同様に残る。
+方式の比較と再現に必要な数値はW&Bを無効にしても失われない。
+この前提を崩す変更（W&Bにしか残らない値を増やす）は入れない。
+
+**`WANDB_MODE`は`offline`固定**。
+`online`はネットワークへ到達できない環境で`wandb.init()`がハングし、
+`init_timeout`でも打ち切れないため採用しない。
+アップロードは`wandb sync`で後から行う。
+
+**本番推論（`main.py`）はW&Bへ記録しない**。
+ネットワーク断が入出庫カウントの停止に直結するため、24/7で動く監視系に
+その依存を持ち込まない。実装漏れではなく決定である。
+
+**検証手順で回すrunはW&Bへ残す**。
+`04_multi_video_mae.py`（閾値スイープ）と`02_run_analysis.py`（詳細分析）は
+`USE_WANDB=true WANDB_MODE=offline WANDB_DIR=data/outputs`付きで実行する。
+2ライン方式の`main.py`も同様（`raspi/line_detection/VERIFICATION.md`）。
+
+スクリプトごとの対応状況は次のとおり。
+
+| スクリプト | W&B | 記録の粒度 |
+|---|---|---|
+| `scripts/04_multi_video_mae.py` | 対応 | config + summary（時系列なし） |
+| `scripts/02_run_analysis.py` | 対応 | config + 時系列 + summary |
+| `main.py` | 非対応（決定） | 標準出力のみ |
+| `scripts/03_sweep_params.py` | 非対応 | `04`に置き換わった旧スイープ |
+| `scripts/01_show_roi.py`、`roi_setup/setup_roi.py` | 非対応 | 計測ではなく設定と確認のツール |
+
+将来`online`へ切り替える場合、および`main.py`をW&Bへ繋ぐ場合は、
+`wandb.init()`の失敗時に`enabled=False`へ降格して計測本体を続行する改修が前提になる。
+`ExperimentLogger`は`enabled=False`で完全なno-opになるため、降格の受け皿は既にある。
+
 ## 既知の問題
 
 - `main.py`（本番推論）は`counter.cleanup()`を一度も呼んでいない
