@@ -22,7 +22,13 @@ ROI方式の検証手順は `raspi/roi-counter/VERIFICATION.md`（`feat/mike/89-
 
 ### W&B（実験記録）について
 
-速度比較（6章）は `WANDB_MODE=offline` で実行する。**オフライン記録はW&Bへの
+**一次記録はローカル成果物であり、W&Bは二次的な閲覧先である。**
+`manifests/{execution_id}.json` は `USE_WANDB` の値に関係なく書かれ、
+`logs/events_<timestamp>.json` には速度統計58キーが `timing_summary` として保存される。
+W&Bを無効にしても、方式の比較と再現に必要な数値は失われない。
+この前提を保つ限り、W&B側の障害が検証の進行を止めることはない。
+
+W&Bを付けて実行する手順（4章・6章）は `WANDB_MODE=offline` で実行する。**オフライン記録はW&Bへの
 ログイン無しで動く**（ローカルに run ディレクトリが作られるだけ）。
 
 W&Bサーバへ実際にアップロードするには、事前にログインが必要。
@@ -45,6 +51,52 @@ grep -q "api.wandb.ai" ~/.netrc && echo "ログイン済み" || echo "未ログ�
 > `wandb.init()` は `dir` を渡していないため、未指定だとwandbが**カレントディレクトリ直下**に
 > `wandb/` を作る。`data/` の外に出るとgitignoreの対象外になり、run一式を失いやすい
 > （ROI方式で実際に一度失っている）。
+
+### `WANDB_MODE=online` を採用しない理由（2026-08-26 決定）
+
+`online` は使わない。
+ネットワークへ到達できない環境で `wandb.init()` がハングし、検証そのものが進まなくなるため。
+
+2026-08-25 に wandb 0.28.0 で実測した結果を示す。
+`WANDB_BASE_URL` を到達不能な宛先へ差し替えて、ネットワーク断の2つの形（DNS解決の失敗、接続拒否）を再現した。
+
+| 条件 | 結果 |
+|---|---|
+| `WANDB_MODE=offline` + 到達不能 | 0.5秒で init 成功。`offline-run-…` が生成される |
+| `WANDB_MODE=online` + 接続拒否 | 4分を超えてブロック（100秒で強制終了） |
+| `WANDB_MODE=online` + DNS解決失敗 | 100秒を超えてブロック |
+| 上記に `WANDB_INIT_TIMEOUT=15` | 効かない（ブロックが続く） |
+| 上記に `wandb.Settings(init_timeout=10)` | 効かない（ブロックが続く） |
+| 上記に `wandb.Settings(x_graphql_retry_max=1)` | 19.2秒で `wandb.errors.errors.Error` を送出 |
+
+`init_timeout` は既定90秒が設定されているにもかかわらず、この失敗形態では発火しなかった。
+リトライを打ち切るには `x_graphql_retry_max`（`x_` 接頭辞は内部オプション）に頼るしかない。
+
+打ち切って例外を上げた場合、現在の実装では計測が丸ごと失われる。
+`raspi/common/wandb_logger.py` の `wandb.init()` は try/except で包んでおらず、
+`ExperimentLogger` の生成は `main.py` のフレーム処理を囲む `try:` より前にある。
+例外は `try`/`finally` の外側で発生するので、1フレームも処理しないまま終了し、
+`manifests/` も残らない。
+
+`offline` にはこの問題が無い。
+ネットワークの不在が正常系だからである。
+アップロードは `wandb sync` で任意のタイミングに行える。
+
+将来 `online` へ切り替える場合は、`wandb.init()` を try/except で包み、
+失敗時は `enabled=False` へ降格して計測本体を続行する改修が前提になる。
+`ExperimentLogger` は `enabled=False` で完全な no-op になるため、降格の受け皿は既にある。
+
+なお init 成功後に切断された場合の挙動は確認していない。
+wandbはローカルへバッファして再送する設計だが、`finish()` でのフラッシュ待ちを含めて未検証である。
+
+### 本番運用ではW&Bを有効にしない（2026-08-26 決定）
+
+`main.py` は検証と本番運用の両方で使う。
+W&Bは `--wandb` または `USE_WANDB=true` で明示的に有効化したときだけ動くので、
+本番運用ではどちらも付けない。
+ネットワーク断が入出庫カウントの停止に直結する状態を、24/7で動く監視系に持ち込まないため。
+
+実運用データの記録が必要になった場合は、上に書いた降格処理を実装した上で改めて判断する。
 
 ## 1. ユニットテスト
 
@@ -107,10 +159,17 @@ uv run python visualize_lines_and_vehicles.py data/inputs/IMG_2787.MOV debug_vis
 ## 4. 本実行（GT比較あり）
 
 ```bash
-uv run python main.py \
+USE_WANDB=true WANDB_MODE=offline WANDB_DIR=data/outputs \
+  WANDB_PROJECT=tracking-parking \
+  uv run python main.py \
   --input data/inputs/IMG_2787.MOV \
   --gt ../roi-counter/data/inputs/configs/IMG_2787_gt.json
 ```
+
+`count_error` と confidence の内訳はこの run のW&B summary に入る。
+W&Bを付けずに実行すると、合格判定の根拠がローカル成果物にしか残らず、
+ROI方式（`04_multi_video_mae.py` が既定でW&Bへ記録する）と粒度が揃わない。
+完走したら6章と同じ手順で `wandb sync` する。
 
 **確認する項目**: 実行中に `GT比較: count_error=0 (in=0, out=0)` が出たあと、
 末尾に次のサマリーが表示される。
@@ -218,6 +277,14 @@ wandb sync data/outputs/wandb/offline-run-<timestamp>-<run_id>
 同期していない run は、manifest に `wandb_run_id` が記録されていてもW&B上には存在しない。
 区切りのよいところでまとめて同期しておくこと。
 
+未同期の run は次で一覧できる（同期済みの run には `*.wandb.synced` が置かれる）。
+
+```bash
+for d in data/outputs/wandb/offline-run-*; do
+  find "$d" -maxdepth 1 -name '*.wandb.synced' | grep -q . || echo "未同期: $d"
+done
+```
+
 ## 7. イベント単位の精度評価
 
 台数（`count_error`）ではなく、個々のイベントがGTと時刻レベルで対応するかを評価する。
@@ -242,6 +309,7 @@ uv run python build_accuracy_report.py \
 | confidence | high / normal とも1件以上 |
 | `event_id` | 出力JSON内で重複なし |
 | `git_dirty` | `false`（速度計測を行う場合） |
+| W&B同期 | 未同期の offline run が残っていないこと（6章） |
 
 ## 9. この手順で確認できないこと
 

@@ -43,6 +43,8 @@
 8. **ネットワークの無い環境（Raspberry Pi 実機）での計測を第一級ユースケースとする。**
    - `WANDB_MODE` 環境変数（`online` / `offline`）を尊重する。offline 時はローカルに記録され、後日 `wandb sync` でアップロードできる。
    - README（または各スクリプトの docstring）に offline 計測 → sync の手順を 3〜4 行で記載すること。
+   - **運用は `offline` に固定する（2026-08-26 決定）**。`online` はネットワークへ到達できない環境で `wandb.init()` がハングし、`WANDB_INIT_TIMEOUT` でも `Settings(init_timeout)` でも打ち切れない。実測値と根拠は `raspi/line_detection/VERIFICATION.md` の0章に記載した。
+   - **本番運用では `--wandb` / `USE_WANDB` を付けない（2026-08-26 決定）**。ネットワーク断が入出庫カウントの停止に直結する状態を、24/7で動く監視系へ持ち込まないため。ROI方式の `main.py` も同じ理由でW&B非対応のままとする。
 
 ---
 
