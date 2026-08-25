@@ -44,6 +44,7 @@ from common.run_identity import (
     write_run_manifest,
 )
 from common.frame_stats import compute_timing_stats
+from common.time_windows import frames_from_seconds
 from common.frame_timing import (
     DEFAULT_WARMUP_FRAMES,
     TIMING_SCHEMA_VERSION,
@@ -95,8 +96,10 @@ S_HIGH_LIST = parse_float_list(
     [0.55, 0.60, 0.65, 0.70, 0.75, 0.80, 0.85, 0.90, 0.95],
     source="S_HIGH_LIST",
 )
-CLEANUP_THRESHOLD = 150
-MAX_CANDIDATE_AGE = 300
+# 時間窓は秒で持ち、動画のfpsからフレーム数へ変換する（common/time_windows.py）。
+# フレーム数で直接持つと、同じ値が撮影fpsによって別の長さを意味してしまう。
+CLEANUP_THRESHOLD_SEC = 5.0   # 旧既定の150フレームは30fpsで5秒
+MAX_CANDIDATE_AGE_SEC = 10.0  # 旧既定の300フレームは30fpsで10秒
 S_HISTORY_LIMIT = 300
 VEHICLE_CLASSES = [2, 7]  # COCO: 2=car, 7=truck
 MODEL_PATH = "yolov8s.pt"
@@ -213,6 +216,8 @@ def empty_run_result() -> dict:
         "timings": [],
         "events": [],
         "frame_width": 0, "frame_height": 0, "source_fps": 0.0,
+        "cleanup_threshold": 0,
+        "max_candidate_age": 0,
         "active_detections": 0,
         "retained_states": 0,
         "archived_events": 0,
@@ -266,6 +271,12 @@ def build_detection_trace(model: YOLO, video_source: str) -> DetectionTrace | No
         return None
 
     fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
+    if fps <= 0:
+        # 時間窓（cleanup / candidate age）をフレーム数へ変換できないため、
+        # 窓の長さが不定のまま計測することになる。動画を開けない場合と同じ扱いにする。
+        print(f"[ERROR] fpsを取得できません: {video_source}")
+        cap.release()
+        return None
     w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     synchronize_model = model_synchronizer(model, YOLO_DEVICE)
@@ -332,11 +343,13 @@ def replay_counts(
     read/inferenceが別呼び出しで既に終わっているため再現できない）。
     """
     progress_fn = get_progress_fn(progress_method)
+    cleanup_threshold = frames_from_seconds(CLEANUP_THRESHOLD_SEC, trace.source_fps)
+    max_candidate_age = frames_from_seconds(MAX_CANDIDATE_AGE_SEC, trace.source_fps)
     counter = Counter(
         s_low,
         s_high,
-        cleanup_threshold=CLEANUP_THRESHOLD,
-        max_candidate_age=MAX_CANDIDATE_AGE,
+        cleanup_threshold=cleanup_threshold,
+        max_candidate_age=max_candidate_age,
         s_history_limit=S_HISTORY_LIMIT,
     )
     timing_records: list[FrameTiming] = []
@@ -401,6 +414,8 @@ def replay_counts(
         "frame_width":   trace.frame_width,
         "frame_height":  trace.frame_height,
         "source_fps":    trace.source_fps,
+        "cleanup_threshold": cleanup_threshold,
+        "max_candidate_age": max_candidate_age,
         "active_detections": trace.active_detections,
         "retained_states": len(counter.tracks),
         "archived_events": len(counter.archive),
@@ -506,8 +521,10 @@ def main() -> None:
                 "s_low": s_low,
                 "s_high": s_high,
                 "progress_method": PROGRESS_METHOD,
-                "cleanup_threshold": CLEANUP_THRESHOLD,
-                "max_candidate_age": MAX_CANDIDATE_AGE,
+                "cleanup_threshold_sec": CLEANUP_THRESHOLD_SEC,
+                "max_candidate_age_sec": MAX_CANDIDATE_AGE_SEC,
+                "cleanup_threshold": res["cleanup_threshold"],
+                "max_candidate_age": res["max_candidate_age"],
                 "s_history_limit": S_HISTORY_LIMIT,
                 "detection_cached": True,
                 "detection_cache_id": detection_cache_id,

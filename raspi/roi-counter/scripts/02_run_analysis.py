@@ -30,6 +30,7 @@ from common.run_identity import (
     write_run_manifest,
 )
 from common.frame_stats import compute_timing_stats
+from common.time_windows import frames_from_seconds
 from common.frame_timing import (
     DEFAULT_WARMUP_FRAMES,
     TIMING_SCHEMA_VERSION,
@@ -55,8 +56,10 @@ ROI_POINTS = [
 ]
 S_LOW  = 0.25
 S_HIGH = 0.75
-CLEANUP_THRESHOLD = 150
-MAX_CANDIDATE_AGE = 300
+# 時間窓は秒で持ち、動画のfpsからフレーム数へ変換する（common/time_windows.py）。
+# フレーム数で直接持つと、同じ値が撮影fpsによって別の長さを意味してしまう。
+CLEANUP_THRESHOLD_SEC = 5.0   # 旧既定の150フレームは30fpsで5秒
+MAX_CANDIDATE_AGE_SEC = 10.0  # 旧既定の300フレームは30fpsで10秒
 S_HISTORY_LIMIT = 300
 VEHICLE_CLASSES = [2, 7]  # COCO: 2=car, 7=truck
 MODEL_PATH = "yolov8s.pt"
@@ -118,11 +121,14 @@ def main() -> None:
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         writer = cv2.VideoWriter(str(out_dir / "annotated.mp4"), fourcc, fps, (w, h))
 
+    cleanup_threshold = frames_from_seconds(CLEANUP_THRESHOLD_SEC, fps)
+    max_candidate_age = frames_from_seconds(MAX_CANDIDATE_AGE_SEC, fps)
+
     counter = Counter(
         S_LOW,
         S_HIGH,
-        cleanup_threshold=CLEANUP_THRESHOLD,
-        max_candidate_age=MAX_CANDIDATE_AGE,
+        cleanup_threshold=cleanup_threshold,
+        max_candidate_age=max_candidate_age,
         s_history_limit=S_HISTORY_LIMIT,
     )
     y_min, y_max = get_roi_y_range(ROI_POINTS)
@@ -166,8 +172,10 @@ def main() -> None:
         "s_low": S_LOW,
         "s_high": S_HIGH,
         "progress_method": PROGRESS_METHOD,
-        "cleanup_threshold": CLEANUP_THRESHOLD,
-        "max_candidate_age": MAX_CANDIDATE_AGE,
+        "cleanup_threshold_sec": CLEANUP_THRESHOLD_SEC,
+        "max_candidate_age_sec": MAX_CANDIDATE_AGE_SEC,
+        "cleanup_threshold": cleanup_threshold,
+        "max_candidate_age": max_candidate_age,
         "s_history_limit": S_HISTORY_LIMIT,
         **reproducibility,
     }
@@ -339,8 +347,10 @@ def main() -> None:
             "s_low":  S_LOW,
             "s_high": S_HIGH,
             "progress_method": PROGRESS_METHOD,
-            "cleanup_threshold": CLEANUP_THRESHOLD,
-            "max_candidate_age": MAX_CANDIDATE_AGE,
+            "cleanup_threshold_sec": CLEANUP_THRESHOLD_SEC,
+            "max_candidate_age_sec": MAX_CANDIDATE_AGE_SEC,
+            "cleanup_threshold": cleanup_threshold,
+            "max_candidate_age": max_candidate_age,
             "s_history_limit": S_HISTORY_LIMIT,
             **build_state_metrics(counter, num_tracks),
         }

@@ -3,6 +3,7 @@ import os
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parents[1]))   # raspi/（common 共有のため）
 
 import cv2
 from ultralytics import YOLO
@@ -12,6 +13,8 @@ from src.progress import get_progress_fn
 from src.roi import is_in_roi
 from src.roi_config import load_roi_config
 from src.visualizer import draw_band_lines_for_method, draw_bbox_with_info, draw_counts, draw_roi
+
+from common.time_windows import frames_from_seconds
 
 # ── パラメータ ──────────────────────────────────────────────────────────────
 # ROI・s_low/s_highは設定ファイル（--config）から読む。GUI（roi_setup/
@@ -24,6 +27,14 @@ VEHICLE_CLASSES = [2, 7]  # COCO: 2=car, 7=truck
 # PROGRESS_METHOD=y_normalizedを明示指定する）。scripts/04_multi_video_mae.py:105
 # と同じ流儀。
 PROGRESS_METHOD = os.getenv("PROGRESS_METHOD", "edge_distance")
+
+# 時間窓は秒で持ち、動画・カメラのfpsからフレーム数へ変換する
+# （common/time_windows.py）。実機は検証動画（30fps）より低いfpsで動くため、
+# フレーム数で直接持つと窓の長さが実機だけ伸びる。
+CLEANUP_THRESHOLD_SEC = 5.0
+MAX_CANDIDATE_AGE_SEC = 10.0
+# カメラ入力でfpsを取得できない場合の代替値。
+FALLBACK_FPS = 30.0
 # ────────────────────────────────────────────────────────────────────────────
 
 
@@ -50,7 +61,13 @@ def main() -> None:
         print(f"[ERROR] 入力を開けません: {cfg.video}")
         sys.exit(1)
 
-    counter = Counter(cfg.s_low, cfg.s_high)
+    fps = cap.get(cv2.CAP_PROP_FPS) or FALLBACK_FPS
+    counter = Counter(
+        cfg.s_low,
+        cfg.s_high,
+        cleanup_threshold=frames_from_seconds(CLEANUP_THRESHOLD_SEC, fps),
+        max_candidate_age=frames_from_seconds(MAX_CANDIDATE_AGE_SEC, fps),
+    )
 
     while cap.isOpened():
         ret, frame = cap.read()

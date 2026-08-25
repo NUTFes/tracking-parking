@@ -3,6 +3,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 sys.path.insert(0, str(Path(__file__).parents[1]))          # roi-counter/
 sys.path.insert(0, str(Path(__file__).parents[1] / "scripts"))  # roi-counter/scripts/
@@ -257,10 +258,42 @@ def test_replay_counts_is_independent_across_repeated_calls():
 
 
 def test_replay_counts_returns_empty_result_shape_matching_empty_run_result():
+    # source_fpsは正の値を置く。build_detection_trace()がfps<=0の動画を
+    # Noneで弾くため、replay_counts()へfps不明のtraceが渡ることはない。
     trace = mae.DetectionTrace(
-        frame_width=0, frame_height=0, source_fps=0.0, frames=[], active_detections=0,
+        frame_width=0, frame_height=0, source_fps=30.0, frames=[], active_detections=0,
     )
     res = mae.replay_counts(trace, REPLAY_ROI, "y_normalized", s_low=0.3, s_high=0.7)
     assert set(res) == set(mae.empty_run_result())
     assert res["count_in"] == 0
     assert res["events"] == []
+
+
+def test_replay_counts_derives_time_windows_from_source_fps():
+    """同じ秒数の窓が、fpsに応じたフレーム数へ変換されること。
+
+    フレーム数で固定すると、10fpsの実機では窓が30fps時の3倍の長さになる。
+    """
+    def run(fps):
+        trace = mae.DetectionTrace(
+            frame_width=400, frame_height=300, source_fps=fps,
+            frames=[], active_detections=0,
+        )
+        return mae.replay_counts(trace, REPLAY_ROI, "y_normalized", s_low=0.3, s_high=0.7)
+
+    at30 = run(30.0)
+    at10 = run(10.0)
+
+    assert at30["cleanup_threshold"] == mae.CLEANUP_THRESHOLD_SEC * 30
+    assert at30["max_candidate_age"] == mae.MAX_CANDIDATE_AGE_SEC * 30
+    assert at10["cleanup_threshold"] == mae.CLEANUP_THRESHOLD_SEC * 10
+    assert at10["max_candidate_age"] == mae.MAX_CANDIDATE_AGE_SEC * 10
+
+
+def test_replay_counts_rejects_trace_without_usable_fps():
+    """fpsが不明なまま時間窓を導出しない（窓の長さが黙って狂うのを防ぐ）。"""
+    trace = mae.DetectionTrace(
+        frame_width=0, frame_height=0, source_fps=0.0, frames=[], active_detections=0,
+    )
+    with pytest.raises(ValueError, match="fps"):
+        mae.replay_counts(trace, REPLAY_ROI, "y_normalized", s_low=0.3, s_high=0.7)

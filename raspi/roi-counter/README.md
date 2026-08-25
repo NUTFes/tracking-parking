@@ -50,8 +50,8 @@ GUIで決めたROIはこの3本すべてに反映される（`02`/`03`は対象�
 | `VIDEO_SOURCE` | （`02`/`03`のみ）動画ファイルパスまたはカメラインデックス（`0` 等） |
 | `ROI_POINTS` | （`02`/`03`のみ）ROIの4頂点（画素座標） |
 | `S_LOW` / `S_HIGH` | （`02`/`03`のみ）入口側/奥側バンドの閾値 |
-| `CLEANUP_THRESHOLD` | 未更新trackを削除またはarchiveへ移すまでのフレーム数（既定150） |
-| `MAX_CANDIDATE_AGE` | 候補状態を維持する最大フレーム数（既定300） |
+| `CLEANUP_THRESHOLD_SEC` | 未更新trackを削除またはarchiveへ移すまでの秒数（既定5.0） |
+| `MAX_CANDIDATE_AGE_SEC` | 候補状態を維持する最大秒数（既定10.0） |
 | `S_HISTORY_LIMIT` | trackごとに保持する`s_history`の最大件数（既定300、0は無制限） |
 | `PROGRESS_METHOD` | 進行度計算方式（`y_normalized`または`edge_distance`、既定`edge_distance`）。環境変数でも指定可能 |
 | `VEHICLE_CLASSES` | 検出対象クラス（COCO: `2`=car, `7`=truck） |
@@ -224,7 +224,7 @@ tracker・device・warm-up・動画保存/表示設定を一致させる。こ�
 `scripts/02_run_analysis.py`と`scripts/04_multi_video_mae.py`は、毎フレームの更新後に
 stale trackをcleanupする。
 
-未確定trackは`CLEANUP_THRESHOLD`を超えて未更新になると削除する。
+未確定trackは`CLEANUP_THRESHOLD_SEC`を超えて未更新になると削除する。
 
 `COUNTED` trackは履歴全体を保持せず、確定フレームと`s`要約値だけをarchiveへ移す。
 
@@ -386,6 +386,34 @@ ROI counterのテストを実行すること。
 **出力**: 同ディレクトリに `heatmap_count_error.png`，`line_s_low.png`，`line_s_high.png`，`heatmap_elapsed_ms.png`
 
 ---
+
+## 時間窓は秒で持つ
+
+`CLEANUP_THRESHOLD_SEC`と`MAX_CANDIDATE_AGE_SEC`は秒で指定し、動画を開いた時点の
+fpsからフレーム数へ変換する（`common/time_windows.py`の`frames_from_seconds`）。
+
+フレーム数で直接持つと、同じ設定値が撮影fpsによって別の長さを意味してしまう。
+150フレームは30fpsで5秒だが、10fpsでは15秒になる。**検証に使ってきた動画は30fps、
+実機のRaspberry Piは10fps前後で動く**ため、フレーム基準のままでは検証と実運用の
+あいだに黙って差が入る。
+
+既定値（5.0秒・10.0秒）は、旧既定のフレーム数（150・300）を30fpsで換算した値と
+一致する。30fpsの動画では挙動が変わらない。
+
+runには秒と変換後のフレーム数の両方を記録する。
+
+| キー | 内容 |
+|---|---|
+| `cleanup_threshold_sec` / `max_candidate_age_sec` | 設定した秒数（仕様） |
+| `cleanup_threshold` / `max_candidate_age` | 変換後のフレーム数（実際の挙動） |
+
+`condition_key`に入るのは変換後のフレーム数である。秒数が同じでもfpsが違えば
+別条件になる、という扱いになる。
+
+fpsを取得できない動画は`build_detection_trace`が`None`を返して計測対象から外す。
+窓の長さが不定のまま計測しないため。
+
+2ライン方式の`MAX_FRAME_GAP_SEC`も同じ仕組みで、`frames_from_seconds`を共有する。
 
 ## W&Bの運用方針
 
