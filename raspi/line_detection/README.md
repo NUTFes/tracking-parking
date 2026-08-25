@@ -284,9 +284,22 @@ CONFIDENCE_THRESHOLD=0.3  # 検知信頼度閾値(0.0-1.0)
 ```bash
 MARGIN_PX=5.0              # 判定保留帯の半幅(px)。3cスイープ採用値
 ENDPOINT_MARGIN_PX=0.0     # 有限線分判定の端点許容量(px)
-MAX_FRAME_GAP=90          # Line1とLine2の最大フレーム差(3秒@30fps)
-CLEANUP_THRESHOLD=150      # 古い追跡をクリーンアップ(5秒@30fps)
+MAX_FRAME_GAP_SEC=3.0      # Line1とLine2の通過を対応付ける最大の時間差(秒)
+CLEANUP_THRESHOLD_SEC=5.0  # 古い追跡をクリーンアップするまでの未更新時間(秒)
 ```
+
+**時間窓は秒で指定する。** 動画を開いた時点のfpsからフレーム数へ変換する
+（`common/time_windows.py`の`frames_from_seconds`）。フレーム数で直接持つと、
+同じ設定値が撮影fpsによって別の長さを意味してしまう。90フレームは30fpsで3秒だが、
+10fpsでは9秒になる。検証に使ってきた動画は30fps、実機のRaspberry Piは10fps前後で
+動くため、フレーム基準のままでは検証と実運用のあいだに黙って差が入る。
+
+既定値（3.0秒・5.0秒）は旧既定のフレーム数（90・150）を30fpsで換算した値と一致する。
+30fpsの動画では挙動が変わらない。runには秒（`max_frame_gap_sec`）と変換後の
+フレーム数（`max_frame_gap`）の両方を記録し、`condition_key`にはフレーム数が入る。
+
+旧`MAX_FRAME_GAP`／`CLEANUP_THRESHOLD`が`.env`に残っている場合は、黙って無視せず
+起動時にエラーで移行を促す。
 
 ### 出力設定
 
@@ -353,7 +366,7 @@ IF Line2のみ交差(Line1交差なし):
 **考えられる原因:**
 1. ライン位置が適切でない → `setup_lines.py`で再設定
 2. `MARGIN_PX`が大きすぎる/小さすぎる → `.env`で調整(px単位)
-3. `MAX_FRAME_GAP`が適切でない → 車両の通過速度に合わせて調整
+3. `MAX_FRAME_GAP_SEC`が適切でない → 車両の通過速度に合わせて調整
 
 ## 参考
 

@@ -315,7 +315,7 @@ uv run python build_accuracy_report.py \
 
 - **イベント単位の精度（precision / recall / F1）**。GTにイベント単位のアノテーションが
   未整備のため（7章参照）
-- **`tolerance_sec`（既定10.0秒）と `MAX_FRAME_GAP`（既定90フレーム）の妥当性**。
+- **`tolerance_sec`（既定10.0秒）と `MAX_FRAME_GAP_SEC`（既定3.0秒）の妥当性**。
   実データによる分布計測が必要
 - **実機（Raspberry Pi）でのリアルタイム性**。開発機での計測値は参考値にとどまる。
   `EXP_DEVICE_NAME` / `EXP_DEVICE_ACCELERATOR` を実機の値にして計測し直すこと

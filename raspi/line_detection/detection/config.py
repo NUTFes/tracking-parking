@@ -41,8 +41,11 @@ class Config:
     # 検知パラメータ
     margin_px: float  # 判定保留帯の半幅(px)
     endpoint_margin_px: float  # 有限線分判定における端点の許容量(px)
-    max_frame_gap: int  # Line1とLine2の最大フレーム差
-    cleanup_threshold: int  # 古い追跡をクリーンアップするフレーム数
+    # 時間窓は秒で持ち、動画のfpsからフレーム数へ変換する
+    # （common/time_windows.py の frames_from_seconds）。フレーム数で直接持つと、
+    # 同じ設定値が撮影fpsによって別の長さを意味してしまう。
+    max_frame_gap_sec: float  # Line1とLine2の通過を対応付ける最大の時間差(秒)
+    cleanup_threshold_sec: float  # 古い追跡をクリーンアップするまでの未更新時間(秒)
     iou_threshold: float  # トラッキングのIOU閾値
 
     # 処理方式
@@ -127,8 +130,20 @@ class Config:
             )
         margin_px = float(os.getenv("MARGIN_PX", "5.0"))
         endpoint_margin_px = float(os.getenv("ENDPOINT_MARGIN_PX", "0.0"))
-        max_frame_gap = int(os.getenv("MAX_FRAME_GAP", "90"))
-        cleanup_threshold = int(os.getenv("CLEANUP_THRESHOLD", "150"))
+        for old_name, new_name, old_example, new_example in (
+            ("MAX_FRAME_GAP", "MAX_FRAME_GAP_SEC", "90", "3.0"),
+            ("CLEANUP_THRESHOLD", "CLEANUP_THRESHOLD_SEC", "150", "5.0"),
+        ):
+            if os.getenv(old_name) is not None and os.getenv(new_name) is None:
+                raise ValueError(
+                    f"{old_name} は廃止されました。{new_name}(単位: 秒)へ移行してください。\n"
+                    f"  旧: {old_name}={old_example} はフレーム数で、30fpsを前提とした値でした。\n"
+                    f"  新: {new_name} は秒で指定し、動画のfpsからフレーム数へ変換します。\n"
+                    f"  30fps相当の設定は {new_name}={new_example} です。\n"
+                    f"  .env の {old_name} 行を {new_name} へ書き換えてください。"
+                )
+        max_frame_gap_sec = float(os.getenv("MAX_FRAME_GAP_SEC", "3.0"))
+        cleanup_threshold_sec = float(os.getenv("CLEANUP_THRESHOLD_SEC", "5.0"))
         iou_threshold = float(os.getenv("IOU_THRESHOLD", "0.3"))
 
         # 処理方式
@@ -149,8 +164,8 @@ class Config:
             parking_ref_point=parking_ref_point,
             margin_px=margin_px,
             endpoint_margin_px=endpoint_margin_px,
-            max_frame_gap=max_frame_gap,
-            cleanup_threshold=cleanup_threshold,
+            max_frame_gap_sec=max_frame_gap_sec,
+            cleanup_threshold_sec=cleanup_threshold_sec,
             iou_threshold=iou_threshold,
             method=method,
             save_video=save_video,
@@ -183,11 +198,11 @@ class Config:
         if self.endpoint_margin_px < 0:
             errors.append(f"endpoint_margin_pxは0以上の値である必要があります: {self.endpoint_margin_px}")
 
-        if self.max_frame_gap < 0:
-            errors.append(f"max_frame_gapは正の値である必要があります: {self.max_frame_gap}")
+        if self.max_frame_gap_sec < 0:
+            errors.append(f"max_frame_gap_secは0以上の値である必要があります: {self.max_frame_gap_sec}")
 
-        if self.cleanup_threshold < 0:
-            errors.append(f"cleanup_thresholdは正の値である必要があります: {self.cleanup_threshold}")
+        if self.cleanup_threshold_sec < 0:
+            errors.append(f"cleanup_threshold_secは0以上の値である必要があります: {self.cleanup_threshold_sec}")
 
         # 処理方式のチェック
         if self.method != "hybrid":

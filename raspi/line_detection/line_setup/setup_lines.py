@@ -259,7 +259,7 @@ PARKING_REF_Y={self.points[4][1]}
 # 検知パラメータ
 MARGIN_PX=5.0
 ENDPOINT_MARGIN_PX=0.0
-MAX_FRAME_GAP=90           # 3秒@30fps
+MAX_FRAME_GAP_SEC=3.0      # 秒。動画のfpsからフレーム数へ変換する
 CLEANUP_THRESHOLD=150      # 5秒@30fps
 
 # 処理方式: hybrid固定

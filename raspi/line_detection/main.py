@@ -25,6 +25,7 @@ from detection.tracker import VehicleTracker
 from result_output.video_writer import VideoAnnotator
 from result_output.event_logger import EventLogger
 from common.frame_stats import compute_timing_stats
+from common.time_windows import frames_from_seconds
 from common.frame_timing import (
     DEFAULT_WARMUP_FRAMES,
     TIMING_SCHEMA_VERSION,
@@ -191,12 +192,20 @@ def process_video(
 
     print(f"✓ 動画情報: {width}x{height} @ {fps}fps, {total_frames}フレーム")
 
+    # 時間窓（秒）をこの動画のfpsにおけるフレーム数へ変換する。
+    max_frame_gap = frames_from_seconds(config.max_frame_gap_sec, fps)
+    cleanup_threshold = frames_from_seconds(config.cleanup_threshold_sec, fps)
+
     # トラッカーを初期化
     tracker = VehicleTracker(
-        max_frame_gap=config.max_frame_gap,
-        cleanup_threshold=config.cleanup_threshold
+        max_frame_gap=max_frame_gap,
+        cleanup_threshold=cleanup_threshold
     )
-    print(f"✓ トラッカー初期化: max_frame_gap={config.max_frame_gap}, cleanup={config.cleanup_threshold}")
+    print(
+        f"✓ トラッカー初期化: "
+        f"max_frame_gap={max_frame_gap}フレーム({config.max_frame_gap_sec}秒), "
+        f"cleanup={cleanup_threshold}フレーム({config.cleanup_threshold_sec}秒) @ {fps}fps"
+    )
 
     # ライン交差検知器を初期化
     detector = LineCrossingDetector(
@@ -239,10 +248,10 @@ def process_video(
     input_type = "file" if isinstance(video_path, str) else "camera"
     dataset = Path(str(video_path)).stem if isinstance(video_path, str) else f"camera_{video_path}"
     exp_params = {
-        "cleanup_threshold": config.cleanup_threshold,
+        "cleanup_threshold": cleanup_threshold,
         "margin_px": config.margin_px,
         "endpoint_margin_px": config.endpoint_margin_px,
-        "max_frame_gap": config.max_frame_gap,
+        "max_frame_gap": max_frame_gap,
         "crossing_method": CROSSING_METHOD,
     }
     reproducibility = collect_reproducibility_info()
@@ -278,6 +287,10 @@ def process_video(
         "save_logs": config.save_logs,
         "show_display": config.show_display,
         "timing_schema_version": TIMING_SCHEMA_VERSION,
+        # 秒（仕様）と、上のexp_params側に入る変換後のフレーム数（実際の挙動）を
+        # 両方残す。condition_keyに入るのはフレーム数のほう。
+        "max_frame_gap_sec": config.max_frame_gap_sec,
+        "cleanup_threshold_sec": config.cleanup_threshold_sec,
         **exp_params,
         **reproducibility,
         **build_ground_truth_config(gt),
