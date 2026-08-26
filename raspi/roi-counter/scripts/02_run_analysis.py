@@ -45,17 +45,18 @@ from common.frame_timing import (
 )
 
 # ── パラメータ ──────────────────────────────────────────────────────────────
-VIDEO_SOURCE: str | int = "data/inputs/IMG_2788.MOV"
-EXP_NAME = ""  # 空文字 → data/outputs/ 直下
+VIDEO_SOURCE: str | int = "data/inputs/1787008160.558032.mp4"
+EXP_NAME = "diag_s_distribution"  # 空文字 → data/outputs/ 直下
 
+# roi_setup/setup_roi.py で決めた新画角のROI（2026-08-26設定、5本共通）。
 ROI_POINTS = [
-    (630, 770),
-    (1270, 770),
-    (1530, 1000),
-    (390, 1000),
+    (577, 614),
+    (1343, 612),
+    (1615, 894),
+    (252, 872),
 ]
 S_LOW  = 0.25
-S_HIGH = 0.75
+S_HIGH = 0.30
 # 時間窓は秒で持ち、動画のfpsからフレーム数へ変換する（common/time_windows.py）。
 # フレーム数で直接持つと、同じ値が撮影fpsによって別の長さを意味してしまう。
 CLEANUP_THRESHOLD_SEC = 5.0   # 旧既定の150フレームは30fpsで5秒
