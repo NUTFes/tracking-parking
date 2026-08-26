@@ -1,0 +1,21 @@
+# YOLOv8とトラッキング
+ultralytics==8.2.52
+
+# 動画処理
+opencv-python==4.8.1.78
+
+# 設定管理
+python-dotenv==1.0.0
+
+# 数値演算
+numpy==1.24.4
+
+# 深層学習バックエンド
+torch==2.2.2
+torchvision==0.17.2
+
+# データ処理
+pandas==2.2.1
+
+# 実験管理（WANDB_MODE=offline対応）
+wandb>=0.28.0
