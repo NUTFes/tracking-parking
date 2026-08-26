@@ -2,7 +2,13 @@ from typing import Iterable, List, Optional
 
 from .tracker import CountedEvent, VehicleTrack
 
-EVENT_COLUMNS = ("track_id", "event_type", "frame_index", "timestamp_sec", "is_warmup", "event_id")
+# s要約はVehicleTrack（active）とCountedEvent（archive）が同じ属性名で持つため、
+# 両方から同じように読める。閾値の位置が車両の実際の到達点と合っているかは、
+# この列が無いと確定済みイベントについて確認できない（archiveがs_historyを捨てるため）。
+EVENT_COLUMNS = (
+    "track_id", "event_type", "frame_index", "timestamp_sec", "is_warmup", "event_id",
+    "s_min", "s_max", "s_first", "s_last", "n_samples",
+)
 
 
 def build_event_rows(
@@ -37,5 +43,10 @@ def build_event_rows(
             "timestamp_sec": timestamp_sec,
             "is_warmup": is_warmup,
             "event_id": track.event_id,
+            "s_min": track.s_min,
+            "s_max": track.s_max,
+            "s_first": track.s_first,
+            "s_last": track.s_last,
+            "n_samples": track.n_samples,
         })
     return rows

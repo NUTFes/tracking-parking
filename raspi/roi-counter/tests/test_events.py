@@ -119,3 +119,30 @@ def test_build_event_rows_includes_archive_and_active_tracks_in_order():
     assert [row["track_id"] for row in rows] == [1, 3]
     assert [row["event_type"] for row in rows] == ["OUT", "IN"]
     assert [row["event_id"] for row in rows] == ["evt-archived", "evt-active"]
+
+
+def test_s要約をactive_trackとarchiveの双方から出力する():
+    """確定済みイベントのs到達点を、archive移動後も追える必要がある。
+
+    archiveはs_historyを捨てて要約値だけを残すため、この列が無いと
+    「閾値が車両の実際の到達点と合っているか」を確定イベントについて確認できない。
+    """
+    active = VehicleTrack(
+        track_id=1, counted_as="IN", counted_frame=10,
+        s_min=0.11, s_max=0.62, s_first=0.12, s_last=0.60, n_samples=7,
+    )
+    archived = CountedEvent(
+        track_id=2, event_id="e2", counted_as="IN", counted_frame=20,
+        first_seen_frame=15, candidate_started_frame=16, last_seen_frame=25,
+        s_min=0.21, s_max=0.58, s_first=0.22, s_last=0.55, n_samples=9,
+    )
+    rows = build_event_rows([active], fps=10.0, warmup_frames=0, archive=[archived])
+
+    assert [r["track_id"] for r in rows] == [1, 2]
+    assert (rows[0]["s_min"], rows[0]["s_max"], rows[0]["n_samples"]) == (0.11, 0.62, 7)
+    assert (rows[1]["s_min"], rows[1]["s_max"], rows[1]["n_samples"]) == (0.21, 0.58, 9)
+
+
+def test_s要約の列がEVENT_COLUMNSに含まれる():
+    for column in ("s_min", "s_max", "s_first", "s_last", "n_samples"):
+        assert column in EVENT_COLUMNS
