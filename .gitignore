@@ -32,5 +32,9 @@ work-agents/*
 .claude/
 .claude/*
 
+# エディタ設定（リポジトリとして不要。個人環境ごとに再生成されるため、
+# 追跡するとrun_identityのgit_dirtyが常にtrueになる）
+.vscode/
+
 # ローカルディレクトリ
 **/*.local
