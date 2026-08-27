@@ -18,6 +18,51 @@ import os
 from typing import List, Tuple, Optional
 
 
+LINE_ENV_KEYS = (
+    "LINE1_START_X", "LINE1_START_Y", "LINE1_END_X", "LINE1_END_Y",
+    "LINE2_START_X", "LINE2_START_Y", "LINE2_END_X", "LINE2_END_Y",
+    "PARKING_REF_X", "PARKING_REF_Y",
+)
+
+
+def build_line_env_values(points: List[Tuple[int, int]]) -> dict:
+    """クリックした5点をenvのキーと値へ変換する。
+
+    順序は Line1始点 / Line1終点 / Line2始点 / Line2終点 / 駐車場基準点。
+    """
+    if len(points) != 5:
+        raise ValueError(f"5点必要です: {len(points)}点")
+    flat = [c for p in points for c in p]
+    return dict(zip(LINE_ENV_KEYS, flat))
+
+
+def apply_line_values(existing: str, values: dict) -> str:
+    """既存の.env本文へライン値を反映した本文を返す。
+
+    既存キーはその行だけを差し替え、無いキーは末尾のブロックへ追記する。
+    コメント、並び順、他のキーはそのまま保つ。
+    """
+    remaining = dict(values)
+    lines = existing.splitlines()
+    for i, line in enumerate(lines):
+        stripped = line.lstrip()
+        if stripped.startswith("#") or "=" not in stripped:
+            continue
+        key = stripped.split("=", 1)[0].strip()
+        if key in remaining:
+            lines[i] = f"{key}={remaining.pop(key)}"
+
+    if remaining:
+        if lines and lines[-1].strip():
+            lines.append("")
+        lines.append("# ライン座標（line_setup/setup_lines.pyが書き込む）")
+        for key in LINE_ENV_KEYS:
+            if key in remaining:
+                lines.append(f"{key}={remaining[key]}")
+
+    return "\n".join(lines) + "\n"
+
+
 class LineSetupGUI:
     """ライン座標設定GUI"""
 
@@ -231,51 +276,25 @@ class LineSetupGUI:
         return True
 
     def save_to_env(self):
-        """設定を.envファイルに保存"""
-        # 環境変数の内容を作成
-        env_content = f"""# プロジェクトパス
-HOME_DIR={os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))}
+        """ライン座標だけを.envへ書き戻す。
 
-# YOLOモデル
-MODEL_PATH=${{HOME_DIR}}/yolo_fine_tuning/runs/detect/train14/weights/best.pt
-CONFIDENCE_THRESHOLD=0.3
+        他のキー、コメント、並び順は保持する（roi-counterのroi_config.pyと
+        同じ契約）。以前はファイル全体をテンプレートで上書きしており、
+        比較条件のために手で入れた値が消えていた。
+        """
+        values = build_line_env_values(self.points)
 
-# Line1設定(入口側ライン)
-LINE1_START_X={self.points[0][0]}
-LINE1_START_Y={self.points[0][1]}
-LINE1_END_X={self.points[1][0]}
-LINE1_END_Y={self.points[1][1]}
+        if os.path.exists(self.env_path):
+            existing = open(self.env_path, encoding="utf-8").read()
+        else:
+            template = os.path.join(os.path.dirname(self.env_path), ".env.template")
+            existing = open(template, encoding="utf-8").read() if os.path.exists(template) else ""
 
-# Line2設定(駐車場側ライン)
-LINE2_START_X={self.points[2][0]}
-LINE2_START_Y={self.points[2][1]}
-LINE2_END_X={self.points[3][0]}
-LINE2_END_Y={self.points[3][1]}
+        with open(self.env_path, "w", encoding="utf-8") as f:
+            f.write(apply_line_values(existing, values))
 
-# 駐車場基準点(駐車場側を定義)
-PARKING_REF_X={self.points[4][0]}
-PARKING_REF_Y={self.points[4][1]}
-
-# 検知パラメータ
-MARGIN_PX=5.0
-ENDPOINT_MARGIN_PX=0.0
-MAX_FRAME_GAP_SEC=3.0      # 秒。動画のfpsからフレーム数へ変換する
-CLEANUP_THRESHOLD=150      # 5秒@30fps
-
-# 処理方式: hybrid固定
-METHOD=hybrid
-
-# 出力設定
-SAVE_VIDEO=true
-SAVE_LOGS=true
-SHOW_DISPLAY=false
-"""
-
-        # .envファイルに書き込み
-        with open(self.env_path, 'w', encoding='utf-8') as f:
-            f.write(env_content)
-
-        print(f"\n✓ 設定を保存しました: {self.env_path}")
+        print(f"\n✓ ライン座標を保存しました: {self.env_path}")
+        print("  （他のキーは変更していません）")
         print("\n設定内容:")
         print(f"  Line1 (入口側): {self.points[0]} → {self.points[1]}")
         print(f"  Line2 (駐車場側): {self.points[2]} → {self.points[3]}")
