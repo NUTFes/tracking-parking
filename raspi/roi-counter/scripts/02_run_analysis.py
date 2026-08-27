@@ -13,9 +13,9 @@ from ultralytics import YOLO
 
 from src.counter import Counter
 from src.events import EVENT_COLUMNS, build_event_rows
-from src.roi import get_roi_y_range, is_in_roi
+from src.roi import is_in_roi
 from src.progress import get_progress_fn
-from src.visualizer import draw_band_lines, draw_bbox_with_info, draw_counts, draw_roi
+from src.visualizer import draw_band_lines_for_method, draw_bbox_with_info, draw_counts, draw_roi
 
 from common.wandb_logger import (
     ExperimentLogger,
@@ -45,8 +45,8 @@ from common.frame_timing import (
 )
 
 # ── パラメータ ──────────────────────────────────────────────────────────────
-VIDEO_SOURCE: str | int = "data/inputs/1787008160.558032.mp4"
-EXP_NAME = "diag_s_distribution"  # 空文字 → data/outputs/ 直下
+VIDEO_SOURCE: str | int = "data/inputs/1787014266.421887.mp4"
+EXP_NAME = "diag_track_attribution"  # 空文字 → data/outputs/ 直下
 
 # roi_setup/setup_roi.py で決めた新画角のROI（2026-08-26設定、5本共通）。
 ROI_POINTS = [
@@ -55,8 +55,8 @@ ROI_POINTS = [
     (1615, 894),
     (252, 872),
 ]
-S_LOW  = 0.25
-S_HIGH = 0.30
+S_LOW  = 0.26
+S_HIGH = 0.32
 # 時間窓は秒で持ち、動画のfpsからフレーム数へ変換する（common/time_windows.py）。
 # フレーム数で直接持つと、同じ値が撮影fpsによって別の長さを意味してしまう。
 CLEANUP_THRESHOLD_SEC = 5.0   # 旧既定の150フレームは30fpsで5秒
@@ -132,7 +132,6 @@ def main() -> None:
         max_candidate_age=max_candidate_age,
         s_history_limit=S_HISTORY_LIMIT,
     )
-    y_min, y_max = get_roi_y_range(ROI_POINTS)
 
     # ── W&B 初期化 ──────────────────────────────────────────────────────────
     input_type = "file" if isinstance(VIDEO_SOURCE, str) else "camera"
@@ -274,7 +273,9 @@ def main() -> None:
                                 frame, (x1, y1, x2, y2), track_id, s, state
                             )
                         draw_roi(frame, ROI_POINTS)
-                        draw_band_lines(frame, ROI_POINTS, y_min, y_max, S_LOW, S_HIGH)
+                        draw_band_lines_for_method(
+                            frame, ROI_POINTS, S_LOW, S_HIGH, PROGRESS_METHOD
+                        )
                         draw_counts(frame, counter.count_in, counter.count_out)
                     if writer is not None:
                         writer.write(frame)
