@@ -238,26 +238,40 @@ def visualize(video_path: str, config: Config, output_path: str = None, start_fr
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("使用方法: python visualize_lines_and_vehicles.py <動画パス> [出力動画パス] [開始フレーム] [終了フレーム]")
-        print("\n例:")
-        print("  python visualize_lines_and_vehicles.py data/inputs/IMG_2787.mp4")
-        print("  python visualize_lines_and_vehicles.py data/inputs/IMG_2787.mp4 debug_vis.mp4")
-        print("  python visualize_lines_and_vehicles.py data/inputs/IMG_2787.mp4 debug_vis.mp4 300 600")
-        sys.exit(1)
+    import argparse
 
-    video_path = sys.argv[1]
-    output_path = sys.argv[2] if len(sys.argv) > 2 else None
-    start_frame = int(sys.argv[3]) if len(sys.argv) > 3 else 0
-    end_frame = int(sys.argv[4]) if len(sys.argv) > 4 else 300
+    parser = argparse.ArgumentParser(
+        description="ライン位置と車両検出位置を可視化",
+        epilog=(
+            "例:\n"
+            "  python visualize_lines_and_vehicles.py data/inputs/IMG_2787.MOV\n"
+            "  python visualize_lines_and_vehicles.py data/inputs/IMG_2787.MOV debug_vis.mp4\n"
+            "  python visualize_lines_and_vehicles.py data/inputs/IMG_2787.MOV debug_vis.mp4 300 600\n"
+            "  python visualize_lines_and_vehicles.py data/inputs/1787011229.231516.mp4 "
+            "vis.mp4 0 300 --env newcam.env"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    # 位置引数の並びはVERIFICATION.mdの記載と互換を保つ。
+    parser.add_argument("video", help="動画ファイルのパス")
+    parser.add_argument("output", nargs="?", default=None, help="出力動画パス(省略時は保存しない)")
+    parser.add_argument("start_frame", nargs="?", type=int, default=0, help="開始フレーム")
+    parser.add_argument("end_frame", nargs="?", type=int, default=300, help="終了フレーム")
+    parser.add_argument(
+        "--env",
+        default=None,
+        help=".envファイルのパス(既定: line_detection/.env)。"
+             "画角ごとに設定を分けている場合に指定する",
+    )
+    args = parser.parse_args()
 
-    # 設定を読み込み
-    env_path = os.path.join(os.path.dirname(__file__), ".env")
+    env_path = args.env or os.path.join(os.path.dirname(__file__), ".env")
     if not os.path.exists(env_path):
         print(f"エラー: .envファイルが見つかりません: {env_path}")
         sys.exit(1)
 
     config = Config.from_env(env_path)
     config.validate()
+    print(f"設定: {env_path}")
 
-    visualize(video_path, config, output_path, start_frame, end_frame)
+    visualize(args.video, config, args.output, args.start_frame, args.end_frame)
