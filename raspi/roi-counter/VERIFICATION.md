@@ -1,0 +1,400 @@
+# ROI方式 検証手順
+
+ROIカウントロジックが期待どおり動くことを、実動画1本に対して端から端まで確認する手順。
+新しい環境で動かすとき、判定ロジックを変更したとき、設置のたびにROIを引き直すときに使う。
+
+対象ブランチ: `feat/mike/89-bbox-analysis-within-roi`
+対象ディレクトリ: `raspi/roi-counter/`
+
+2ライン方式の検証手順は `raspi/line_detection/VERIFICATION.md`（`experiment/ucn/two-lines-detection`）にある。
+
+## 0. 前提条件
+
+- リポジトリルートで `uv sync` 済みであること
+- 実動画とGT設定JSONがローカルに存在すること。`data/` は `.gitignore` 対象なので、
+  リポジトリを新しく取得した環境では別途配置が必要
+  - `data/inputs/IMG_2787.MOV`
+  - `data/inputs/configs/IMG_2787_gt.json`
+- YOLOモデル（`yolov8s.pt`）。未配置なら初回実行時に自動ダウンロードされる
+- 動画1本の検出パスに数分かかる（5分・9023フレームで約5〜10分）
+
+以降のコマンドは断りがない限り `raspi/roi-counter/` をカレントディレクトリとして書く。
+
+### W&B（実験記録）について
+
+**一次記録はローカル成果物であり、W&Bは二次的な閲覧先である。**
+`manifests/{execution_id}.json` は `USE_WANDB` の値に関係なく書かれ、
+`results.csv`、`mae_summary.csv`、`events.csv`、`frames.csv` も同様に残る。
+W&Bを無効にしても、方式の比較と再現に必要な数値は失われない。
+この前提を保つ限り、W&B側の障害が検証の進行を止めることはない。
+
+本手順の実行コマンドは `WANDB_MODE=offline` で書いてある。**オフライン記録は
+W&Bへのログイン無しで動く**（ローカルに run ディレクトリが作られるだけ）。
+
+W&Bサーバへ実際にアップロードするには、事前にログインが必要。
+
+```bash
+wandb login          # 初回のみ。ブラウザでAPIキーを取得して貼り付ける
+```
+
+ログイン状態は次で確認できる。
+
+```bash
+grep -q "api.wandb.ai" ~/.netrc && echo "ログイン済み" || echo "未ログイン"
+```
+
+未ログインのままでも検証手順そのものは完走する。ただし**offline runはローカルに
+溜まり続けるだけで、W&B上では一切参照できない**。manifestに記録される
+`wandb_run_id` も、同期するまではW&B上に対応する実体が無い点に注意すること。
+
+同期は後からまとめて実行できる。
+
+```bash
+wandb sync data/outputs/wandb/offline-run-<timestamp>-<run_id>
+```
+
+### `WANDB_MODE=online` を採用しない理由（2026-08-26 決定）
+
+`online` は使わない。
+ネットワークへ到達できない環境で `wandb.init()` がハングし、検証そのものが進まなくなるため。
+
+2026-08-25 に wandb 0.28.0 で実測した結果を示す。
+`WANDB_BASE_URL` を到達不能な宛先へ差し替えて、ネットワーク断の2つの形（DNS解決の失敗、接続拒否）を再現した。
+
+| 条件 | 結果 |
+|---|---|
+| `WANDB_MODE=offline` + 到達不能 | 0.5秒で init 成功。`offline-run-…` が生成される |
+| `WANDB_MODE=online` + 接続拒否 | 4分を超えてブロック（100秒で強制終了） |
+| `WANDB_MODE=online` + DNS解決失敗 | 100秒を超えてブロック |
+| 上記に `WANDB_INIT_TIMEOUT=15` | 効かない（ブロックが続く） |
+| 上記に `wandb.Settings(init_timeout=10)` | 効かない（ブロックが続く） |
+| 上記に `wandb.Settings(x_graphql_retry_max=1)` | 19.2秒で `wandb.errors.errors.Error` を送出 |
+
+`init_timeout` は既定90秒が設定されているにもかかわらず、この失敗形態では発火しなかった。
+リトライを打ち切るには `x_graphql_retry_max`（`x_` 接頭辞は内部オプション）に頼るしかない。
+
+打ち切って例外を上げた場合、現在の実装では計測が丸ごと失われる。
+`common/wandb_logger.py` の `wandb.init()` は try/except で包んでおらず、
+`ExperimentLogger` の生成は `scripts/02_run_analysis.py` の `try:` より前にある。
+例外は `try`/`finally` の外側で発生するので、1フレームも処理しないまま終了し、
+`run_manifest.json` も残らない。
+
+`offline` にはこの問題が無い。
+ネットワークの不在が正常系だからである。
+アップロードは `wandb sync` で任意のタイミングに行える。
+
+将来 `online` へ切り替える場合は、`wandb.init()` を try/except で包み、
+失敗時は `enabled=False` へ降格して計測本体を続行する改修が前提になる。
+`ExperimentLogger` は `enabled=False` で完全な no-op になるため、降格の受け皿は既にある。
+
+なお init 成功後に切断された場合の挙動は確認していない。
+wandbはローカルへバッファして再送する設計だが、`finish()` でのフラッシュ待ちを含めて未検証である。
+
+### 進行度方式について
+
+進行度 `s` の計算方式は `PROGRESS_METHOD` で切り替わる。**既定は `edge_distance`**。
+
+| 方式 | 内容 | 画角が変わったとき |
+|---|---|---|
+| `edge_distance`（既定） | ROIの4頂点を単位正方形へ写す射影変換のv座標 | ROIを同じ物理目印に引き直せば閾値をそのまま使える |
+| `y_normalized` | ROI全体のy範囲で線形正規化 | ROI形状に依存するため閾値の移植性が無い |
+
+過去の記録（`phase3f_final` 等）と比較する場合は `PROGRESS_METHOD=y_normalized` を
+明示すること。`condition_key` に方式名が含まれるため、方式が違うrunは同一条件とみなされない。
+
+## 1. ユニットテスト
+
+実データを流す前に、純ロジックが壊れていないことを確認する。
+リポジトリルートから実行する。
+
+```bash
+uv run pytest raspi/ -q
+```
+
+**合格基準**: 全件パス（2026-08-20 時点で 264 passed）。
+
+`raspi/common/` は2ライン方式とbyte-identicalで共有しているため、ここを変更した場合は
+2ライン方式側のテストも実行すること。
+
+## 2. ROI 4頂点の設定
+
+設置のたび、または画角が変わったときにGUIで引き直す。
+
+```bash
+uv run python roi_setup/setup_roi.py \
+  --config data/inputs/configs/IMG_2787_gt.json \
+  --seek-sec 5
+```
+
+**頂点は必ず 奥側左 → 奥側右 → 入口側右 → 入口側左 の順にクリックする。**
+この順序は `src/progress.py` の `calc_s_edge_distance` が要求するもので、
+間違えると透視変換が壊れる。
+
+| 操作 | キー |
+|---|---|
+| 前後にシーク | `.` / `,`（1秒）、`]` / `[`（10秒） |
+| フレーム再取得（カメラ入力ではこれのみ） | `space` |
+| 直前の点を取り消し / 全リセット | `u` / `r` |
+| 表示方式の切り替え（表示のみ） | `m` |
+| グリッド表示 | `g` |
+| **保存** | `s` |
+| 保存せず終了 | `q` |
+
+**確認する項目**:
+
+- 車両が写っていないフレームを選ぶこと（車体の特徴点は次回には存在しない）
+- 4頂点は路面の物理的な目印（白線の端、縁石、車止め）に合わせること。
+  これが `edge_distance` の画角非依存性の前提になる
+- 4点そろった時点で赤字のエラーが出ていないこと（巻き方向の誤り、自己交差、退化を検出する）
+- `s_low` / `s_high` のバンド線が、台形ROIに対して遠近に沿って**傾いて**描かれること
+  （水平線になる場合は `y_normalized` 表示になっている）
+
+> **注意**: このツールが編集するのは**ROI4頂点だけ**。`s_low` / `s_high` は設定JSONから
+> 読んで表示するのみで、書き込まない。閾値はスイープの検証結果に従うべきもので、
+> 手動決定の対象ではないため。
+
+保存すると次の2つが更新される。
+
+- `data/inputs/reference_frames/{stem}_{timestamp}.png` — ROI線を焼き込まないクリーンな参照フレーム
+- 設定JSONの `roi` と `roi_setup` キーのみ（`in`/`out`/`events` 等は保持）
+
+同じ状態でもう一度 `s` を押すと「変更がないため保存をスキップしました」と出る（冪等ガード）。
+
+## 3. ROI配置の確認
+
+```bash
+uv run python scripts/01_show_roi.py \
+  --config data/inputs/configs/IMG_2787_gt.json
+```
+
+起動時に `src/roi.check_roi_geometry` による妥当性検証が走り、エラーがあれば
+動画を開く前に終了する。`data/outputs/roi_check.png` に描画結果が保存される。
+
+方式を変えて比較する場合:
+
+```bash
+uv run python scripts/01_show_roi.py \
+  --config data/inputs/configs/IMG_2787_gt.json \
+  --progress-method y_normalized
+```
+
+> **用語の区別**: `data/outputs/roi_check.png` は確認用の**描画済み**画像。
+> `data/inputs/reference_frames/*.png` は層2（将来のホモグラフィ追従）が使う
+> **クリーンな**参照フレーム。別物なので混同しないこと。
+
+## 4. 閾値スイープ（s_low / s_high の決定）
+
+GT付き動画に対して閾値の組み合わせを総当たりし、MAE（count_error）を算出する。
+
+```bash
+ls data/inputs/configs/          # 対象JSONを目視確認（意図しないファイルの混入がないか）
+
+USE_WANDB=true WANDB_MODE=offline WANDB_DIR=data/outputs \
+  WANDB_PROJECT=tracking-parking \
+  EXP_NAME=exp_edge_distance_sweep \
+  uv run python scripts/04_multi_video_mae.py
+```
+
+> **`WANDB_DIR=data/outputs` を省略しないこと。** `raspi/common/wandb_logger.py` の
+> `wandb.init()` は `dir` を渡していないため、未指定だとwandbが**カレントディレクトリ直下**に
+> `wandb/` を作る。`data/` の外に出るとgitignoreの対象外になり、run一式を失いやすい
+> （実際に一度失っている。11章参照）。
+
+起動直後に `動画数: N  パラメータ組み合わせ: M` が出る。既定グリッドは
+`S_LOW_LIST` 9値 × `S_HIGH_LIST` 9値 = 81通り。
+
+**検出パスは動画1本につき1回だけ**実行され、閾値の組み合わせごとには軽量な
+カウントロジックの再生だけが走る（`build_detection_trace` / `replay_counts`）。
+そのため組み合わせ数を増やしても、増えるのは再生コストのみ。
+
+範囲を絞る場合は環境変数で上書きする。
+
+```bash
+S_LOW_LIST=0.15,0.20,0.25 S_HIGH_LIST=0.40,0.45,0.50 \
+  EXP_NAME=verification uv run python scripts/04_multi_video_mae.py
+```
+
+> **注意**: `s_low >= s_high` になる組み合わせが1つでも含まれると、起動時に
+> `ValueError` で停止する（不正な条件で計測しないための設計）。
+
+**出力**: `data/outputs/{EXP_NAME}/mae_{timestamp}/`
+
+| ファイル | 内容 |
+|---|---|
+| `mae_summary.csv` | パラメータごとのMAEサマリー（`s_low, s_high, mae, mean_elapsed_ms`） |
+| `results.csv` | 動画 × パラメータごとの詳細 |
+| `events.csv` | 全run分の確定イベント |
+| `manifests/{execution_id}.json` | run識別子・再現情報 |
+| `diagnostics/{execution_id}.{json,csv}` | IN_CANDIDATE停滞trackの診断 |
+
+実行末尾に `MAE最小: s_low=X s_high=Y mae=Z` が表示される。
+
+### 実行後の同期
+
+run が完走したらW&Bへ同期する。
+offline run は同期するまでローカルにしか存在せず、manifestに記録された
+`wandb_run_id` は参照先を持たないままになる。
+
+```bash
+wandb sync data/outputs/wandb/offline-run-<timestamp>-<run_id>
+```
+
+未同期の run は次で一覧できる（同期済みの run には `*.wandb.synced` が置かれる）。
+
+```bash
+for d in data/outputs/wandb/offline-run-*; do
+  find "$d" -maxdepth 1 -name '*.wandb.synced' | grep -q . || echo "未同期: $d"
+done
+```
+
+### 閾値の選び方
+
+**MAE最小の値をそのまま採るのではなく、同点集合の形を見ること。**
+
+MAE=0になる組み合わせは複数存在することが多い。その中から選ぶ基準は次の2つ。
+
+1. **同点集合の中央付近を選ぶ。** 境界に近い閾値は、トラッキングのわずかな揺らぎで
+   結果が変わりやすく頑健性が低い
+2. **MAE=0が探索範囲の端にしか現れていない場合は、範囲を広げて再検証する。**
+   崖の位置が分からないまま端の値を採用してはいけない
+
+実際、初回のスイープでは `s_high=0.55`（探索範囲の下端）でしかMAE=0が出ず、
+`s_high=0.60` で急にMAE=4へ悪化する崖状の分布だった。範囲を `0.20` まで広げて
+再検証したところ `s_high=0.20〜0.55` の全域でMAE=0と判明し、崖から十分離れた
+`s_high=0.45` を採用した（選定の詳細は `README.md` の「s_low/s_high 書き戻し履歴」）。
+
+## 5. 選定した閾値の書き戻し
+
+閾値を設定JSONへ**手動で**書き込む。GUIは書き込まない設計のため、専用ツールは無い。
+
+`data/inputs/configs/IMG_2787_gt.json` のトップレベルへ `s_low` / `s_high` を追加する
+（`video` / `roi` / `in` / `out` / `roi_setup` は変更しない）。
+
+```json
+{
+  "video": "data/inputs/IMG_2787.MOV",
+  "roi": [[690, 430], [1310, 430], [1550, 660], [484, 638]],
+  "in": 22,
+  "out": 0,
+  "s_low": 0.2,
+  "s_high": 0.45,
+  "roi_setup": { ... }
+}
+```
+
+書き戻したらJSON構文を確認する。
+
+```bash
+python3 -c "import json; json.load(open('data/inputs/configs/IMG_2787_gt.json')); print('JSON構文OK')"
+```
+
+`main.py` と `01_show_roi.py` は `load_roi_config` 経由でこのJSONを読むため、
+書き戻し後は追加のコード変更なしに新しい閾値が反映される。
+
+> **トレーサビリティ**: `data/` はgit管理外なので、この編集はgit履歴に残らない。
+> **選定根拠（該当 `execution_id` / `wandb_run_id` / `condition_key` / `git_sha`）は
+> `README.md` の「s_low/s_high 書き戻し履歴」節へ追記すること。**
+> これがgit管理下で参照できる唯一の記録になる。
+
+## 6. 本実行
+
+```bash
+uv run python main.py --config data/inputs/configs/IMG_2787_gt.json
+```
+
+`q` キーで終了。末尾に `入庫: N  出庫: N` が表示される。
+
+**合格基準**: 書き戻した閾値でGT（`in=22`, `out=0`）と一致すること。
+
+> `main.py` はW&Bへ記録しない。
+> これは実装漏れではなく決定である（2026-08-26）。
+> 本番推論をW&Bへ繋ぐと、ネットワーク断が入出庫カウントの停止に直結する。
+> 24/7で動く監視系にその依存を持ち込まない、という判断による。
+> 実運用データの記録が必要になった場合は、0章に書いた降格処理を実装した上で改めて判断する。
+
+## 7. 1動画の詳細分析（任意）
+
+軌跡・処理時間・アノテーション動画が必要なときに使う。
+
+```bash
+USE_WANDB=true WANDB_MODE=offline WANDB_DIR=data/outputs \
+  WANDB_PROJECT=tracking-parking \
+  uv run python scripts/02_run_analysis.py
+```
+
+`02_run_analysis.py` はROI方式で唯一フレーム単位の時系列を記録できるスクリプトである
+（`04_multi_video_mae.py` は config と summary のみ）。
+W&Bを無効にすると、この時系列はどこにも残らない。
+完走したら4章と同じ手順で `wandb sync` する。
+
+> **注意**: このスクリプトは `VIDEO_SOURCE` / `ROI_POINTS` / `S_LOW` / `S_HIGH` が
+> **スクリプト先頭にハードコード**されており、設定JSONを読まない（実験時に手で値を
+> 振る用途のため意図的に据え置いている）。使う場合は 45〜60行目付近を直接編集すること。
+> `03_sweep_params.py` も同様。
+
+## 8. イベント単位の精度評価
+
+台数（`count_error`）ではなく、個々のイベントがGTと時刻レベルで対応するかを評価する。
+
+```bash
+uv run python scripts/05_build_accuracy_report.py \
+  --run-dir data/outputs/exp_edge_distance_sweep/mae_<timestamp> \
+  --output data/outputs/event_accuracy.csv
+```
+
+> **前提**: この評価にはGT JSONに `events` 配列（`event_id` / `direction` / `t_sec`）が
+> 必要になる。現在の `IMG_2787_gt.json` は台数（`in`/`out`）のみで `events` を持たないため、
+> 該当動画はスキップされる。**これは現時点では正常な挙動**。イベント単位の
+> アノテーションを作成してから使う。
+
+## 9. 合格基準のまとめ
+
+| 確認項目 | 合格基準 |
+|---|---|
+| ユニットテスト | 全件パス |
+| ROI設定（GUI） | 幾何エラーなし、バンド線が遠近に沿って傾く |
+| ROI配置確認 | `check_roi_geometry` がエラーを出さない |
+| 閾値スイープ | 選定値で `mae=0`、かつ同点集合の境界でないこと |
+| 本実行 | `入庫: 22　出庫: 0`（GTと一致） |
+| 書き戻し | JSON構文OK、`load_roi_config` が新しい値を返す |
+| トレーサビリティ | README に選定根拠を追記済み |
+| W&B同期 | 未同期の offline run が残っていないこと（4章） |
+
+## 10. この手順で確認できないこと
+
+- **OUT方向の閾値妥当性**。GT付き動画が `IMG_2787`（`in=22, out=0`）の1本のみで、
+  OUT方向のイベントが1件も含まれていない。OUT方向を含むGTが手に入り次第、再検証が必要
+- **イベント単位の精度（precision / recall / F1）**。GTにイベント単位のアノテーションが
+  未整備のため（8章参照）
+- **複数動画にわたる汎化**。現在のMAEは実質1動画の count_error と同じ
+- **実機（Raspberry Pi）でのリアルタイム性**。開発機での計測値は参考値にとどまる
+- **`main.py` の長時間安定性**。`counter.cleanup()` を呼んでいないため、24/7運用では
+  stale trackが蓄積しうる（`README.md` の「既知の問題」参照）
+
+## 11. 過去に踏んだ失敗（再発防止）
+
+### W&B offline run を失った例（2026-08-20）
+
+`WANDB_DIR` を指定せずにスイープを実行したため、run一式が `raspi/roi-counter/wandb/`
+（`data/` の外）に生成された。その後 `git worktree remove --force` を実行した際、
+`data/` はシンボリックリンクだったため manifest 類は残ったが、`wandb/` は実ディレクトリ
+だったので**一緒に削除された**。
+
+結果、manifestに記録された `wandb_run_id` の実体だけが失われ、参照が切れた。
+
+対策として次の3点を守る。
+
+1. スイープ実行時は必ず `WANDB_DIR=data/outputs` を付ける（4章）
+2. `wandb login` を済ませ、区切りのよいところで `wandb sync` する。offline runは
+   同期するまでローカルにしか存在しない
+3. worktreeを削除する前に、`data/` の外に成果物が無いか確認する
+
+```bash
+find . -maxdepth 2 -type d -name wandb -not -path "./data/*"   # 何も出なければOK
+```
+
+## 12. 関連資料
+
+- `README.md` — ディレクトリ構造、設定JSONのスキーマ、`condition_key` への影響、
+  s_low/s_high 書き戻し履歴、既知の問題
+- `raspi/line_detection/VERIFICATION.md` — 2ライン方式の検証手順（別ブランチ）

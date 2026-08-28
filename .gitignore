@@ -11,3 +11,30 @@ __pycache__/
 raspi/result/prediction_visual.png
 *.pt
 .venv/
+
+# data directory
+data/
+data/*
+
+# wandbライブラリがUSE_WANDB=true時にCWD直下へ自動生成するrunディレクトリ
+# （data/outputs/配下のoffline run一式とは別物。scripts実行時のCWD次第で
+# raspi/roi-counter/wandb/ 等、data/の外にも作られるため個別に除外する）
+wandb/
+
+# files and directories for AI agents
+CLAUDE.md
+docs/
+docs/*
+!raspi/line_detection/docs/
+!raspi/line_detection/docs/wandb_integration_spec_v2.md
+work-agents/
+work-agents/*
+.claude/
+.claude/*
+
+# エディタ設定（リポジトリとして不要。個人環境ごとに再生成されるため、
+# 追跡するとrun_identityのgit_dirtyが常にtrueになる）
+.vscode/
+
+# ローカルディレクトリ
+**/*.local
