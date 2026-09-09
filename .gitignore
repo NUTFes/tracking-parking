@@ -1,25 +1,28 @@
+# Python
+__pycache__/
+.venv/
+.pytest_cache/
+
+# 設定（画角ごとの.envを含む。テンプレートのみ追跡する）
+*.env
+.env
+!.env.template
+
+# 入出力データ・モデル重み（サイズが大きくローカル資産）
+# ディレクトリ自体を除外すると中の.gitkeepを再包含できないため、中身を除外する
+/data/**
+/models/**
+!/data/**/
+!/data/**/.gitkeep
+!/models/.gitkeep
+*.pt
+
+# docker-compose.prod.ymlがマウントするローカルディレクトリ
 mongo/
 web/
-trapa/
-__pycache__/
-*.env
-*.yaml
+
+# macOS
 .DS_Store
-!dataset.yaml
-/sahi
-.env
-raspi/result/prediction_visual.png
-*.pt
-.venv/
 
-# 2ライン検知システムの出力ファイル
-data
-
-# ドキュメント
-docs/
-docs/*
-!raspi/line_detection/docs/
-!raspi/line_detection/docs/wandb_integration_spec_v2.md
-
-# ローカルディレクトリ
+# ローカル専用ディレクトリ（docs.local など）
 **/*.local
