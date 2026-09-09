@@ -1,7 +1,7 @@
 import numpy as np
 
-from common.frame_stats import compute_frame_stats, compute_timing_stats
-from common.frame_timing import FrameTiming
+from tracking_parking.common.frame_stats import compute_frame_stats, compute_timing_stats
+from tracking_parking.common.frame_timing import FrameTiming
 
 
 def test_basic_stats():

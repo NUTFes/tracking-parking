@@ -1,14 +1,7 @@
-import sys
-from pathlib import Path
-
 import pytest
 
-
-LINE_ROOT = Path(__file__).parents[1]
-sys.path.insert(0, str(LINE_ROOT))
-
-from detection.config import Line
-from detection.line_crossing import (
+from tracking_parking.config import Line
+from tracking_parking.detection.line_crossing import (
     LineCrossingDetector,
     LineTransitionState,
     classify_side,

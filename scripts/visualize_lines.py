@@ -9,10 +9,10 @@ import sys
 import os
 from ultralytics import YOLO
 
-sys.path.insert(0, os.path.dirname(__file__))
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-from detection.config import Config
-from detection.line_crossing import get_vehicle_point, side_of_line, signed_distance
+from tracking_parking.config import Config
+from tracking_parking.detection.line_crossing import get_vehicle_point, side_of_line, signed_distance
 
 
 def visualize(video_path: str, config: Config, output_path: str = None, start_frame: int = 0, end_frame: int = 300):
@@ -260,12 +260,12 @@ if __name__ == "__main__":
     parser.add_argument(
         "--env",
         default=None,
-        help=".envファイルのパス(既定: line_detection/.env)。"
+        help=".envファイルのパス(既定: リポジトリルートの.env)。"
              "画角ごとに設定を分けている場合に指定する",
     )
     args = parser.parse_args()
 
-    env_path = args.env or os.path.join(os.path.dirname(__file__), ".env")
+    env_path = args.env or os.path.join(REPO_ROOT, ".env")
     if not os.path.exists(env_path):
         print(f"エラー: .envファイルが見つかりません: {env_path}")
         sys.exit(1)

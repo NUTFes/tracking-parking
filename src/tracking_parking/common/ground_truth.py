@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from common.frame_timing import sha256_file
+from tracking_parking.common.frame_timing import sha256_file
 
 
 @dataclass(frozen=True)

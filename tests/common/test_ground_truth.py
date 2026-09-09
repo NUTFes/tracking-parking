@@ -2,8 +2,8 @@ import json
 
 import pytest
 
-from common.frame_timing import COMPARISON_CONFIG_KEYS
-from common.ground_truth import (
+from tracking_parking.common.frame_timing import COMPARISON_CONFIG_KEYS
+from tracking_parking.common.ground_truth import (
     DEFAULT_TOLERANCE_SEC,
     GtEvent,
     GroundTruth,

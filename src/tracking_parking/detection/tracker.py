@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from typing import Dict, Literal, Optional, Tuple, List
 import time
 
-from detection.line_crossing import LineTransitionState
+from tracking_parking.detection.line_crossing import LineTransitionState
 
 
 Confidence = Literal["pending", "high", "normal"]

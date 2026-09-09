@@ -15,18 +15,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from ultralytics import YOLO
 
-# 自ディレクトリと raspi/ をパスに追加
-sys.path.insert(0, os.path.dirname(__file__))
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-from detection.config import Config
-from detection.line_crossing import LineCrossingDetector, get_vehicle_point
-from detection.tracker import VehicleTracker
-from result_output.video_writer import VideoAnnotator
-from result_output.event_logger import EventLogger
-from common.frame_stats import compute_timing_stats
-from common.time_windows import frames_from_seconds
-from common.frame_timing import (
+from tracking_parking.config import Config
+from tracking_parking.detection.line_crossing import LineCrossingDetector, get_vehicle_point
+from tracking_parking.detection.tracker import VehicleTracker
+from tracking_parking.output.video_writer import VideoAnnotator
+from tracking_parking.output.event_logger import EventLogger
+from tracking_parking.common.frame_stats import compute_timing_stats
+from tracking_parking.common.time_windows import frames_from_seconds
+from tracking_parking.common.frame_timing import (
     DEFAULT_WARMUP_FRAMES,
     TIMING_SCHEMA_VERSION,
     FrameTiming,
@@ -38,19 +36,19 @@ from common.frame_timing import (
     sha256_file,
     validate_warmup_frames,
 )
-from common.wandb_logger import (
+from tracking_parking.common.wandb_logger import (
     ExperimentLogger,
     next_log_boundary,
     should_log_frame,
     validate_log_interval_sec,
 )
-from common.run_identity import (
+from tracking_parking.common.run_identity import (
     build_display_name,
     build_run_identity,
     collect_reproducibility_info,
     write_run_manifest,
 )
-from common.ground_truth import (
+from tracking_parking.common.ground_truth import (
     GroundTruth,
     build_ground_truth_config,
     build_ground_truth_summary,
@@ -603,7 +601,7 @@ def main():
     parser.add_argument(
         "--env",
         default=None,
-        help=".envファイルのパス(デフォルト: カレントディレクトリの.env)"
+        help=".envファイルのパス(デフォルト: リポジトリルートの.env)"
     )
     parser.add_argument(
         "--display",
@@ -636,8 +634,8 @@ def main():
     if not args.input and args.camera is None:
         print("エラー: --inputまたは--cameraを指定してください")
         print("\n使用例:")
-        print("  python main.py --input data/inputs/test.mp4")
-        print("  python main.py --camera 0 --display")
+        print("  python scripts/run_detection.py --input data/inputs/test.mp4")
+        print("  python scripts/run_detection.py --camera 0 --display")
         return 1
 
     # 入力ソースを決定
@@ -651,12 +649,12 @@ def main():
         if args.env:
             config = Config.from_env(args.env)
         else:
-            # カレントディレクトリの.envを探す
-            env_path = os.path.join(os.path.dirname(__file__), ".env")
+            # リポジトリルートの.envを探す
+            env_path = os.path.join(REPO_ROOT, ".env")
             if not os.path.exists(env_path):
                 print(f"エラー: .envファイルが見つかりません: {env_path}")
-                print("\nまず line_setup/setup_lines.py を実行してライン座標を設定してください:")
-                print("  python line_setup/setup_lines.py --video data/inputs/test.mp4")
+                print("\nまず scripts/setup_lines.py を実行してライン座標を設定してください:")
+                print("  python scripts/setup_lines.py --video data/inputs/test.mp4")
                 return 1
             config = Config.from_env(env_path)
 

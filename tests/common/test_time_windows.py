@@ -2,7 +2,7 @@ import math
 
 import pytest
 
-from common.time_windows import frames_from_seconds
+from tracking_parking.common.time_windows import frames_from_seconds
 
 
 @pytest.mark.parametrize(

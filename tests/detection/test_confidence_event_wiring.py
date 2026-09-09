@@ -1,15 +1,9 @@
 import math
-import sys
-from pathlib import Path
 
-
-LINE_ROOT = Path(__file__).parents[1]
-sys.path.insert(0, str(LINE_ROOT))
-
-from detection.config import Line
-from detection.line_crossing import LineCrossingDetector
-from detection.tracker import VehicleTracker
-from result_output.event_logger import EventLogger
+from tracking_parking.config import Line
+from tracking_parking.detection.line_crossing import LineCrossingDetector
+from tracking_parking.detection.tracker import VehicleTracker
+from tracking_parking.output.event_logger import EventLogger
 
 
 LINE1 = Line(start=(0, 0), end=(100, 0))

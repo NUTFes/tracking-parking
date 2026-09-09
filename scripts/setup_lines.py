@@ -70,11 +70,11 @@ class LineSetupGUI:
         """
         Args:
             video_path: 動画ファイルのパス
-            env_path: .envファイルのパス(Noneの場合はline_detection/.envを使用)
+            env_path: .envファイルのパス(Noneの場合はリポジトリルートの.envを使用)
         """
         self.video_path = video_path
         self.env_path = env_path or os.path.join(
-            os.path.dirname(os.path.dirname(__file__)),
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
             ".env"
         )
 
@@ -314,7 +314,7 @@ def main():
     parser.add_argument(
         "--env",
         default=None,
-        help=".envファイルのパス(デフォルト: line_detection/.env)"
+        help=".envファイルのパス(デフォルト: リポジトリルートの.env)"
     )
 
     args = parser.parse_args()

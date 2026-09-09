@@ -1,14 +1,8 @@
-import sys
 import math
-from pathlib import Path
 
-
-LINE_ROOT = Path(__file__).parents[1]
-sys.path.insert(0, str(LINE_ROOT))
-
-from detection.config import Line
-from detection.line_crossing import LineCrossingDetector
-from detection.tracker import VehicleTracker
+from tracking_parking.config import Line
+from tracking_parking.detection.line_crossing import LineCrossingDetector
+from tracking_parking.detection.tracker import VehicleTracker
 
 
 # Line1(入口側、y=0)→Line2(駐車場側、y=50)→駐車場基準点(y=100)の順に並ぶ、

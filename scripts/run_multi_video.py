@@ -1,23 +1,21 @@
 #!/usr/bin/env python3
-"""複数動画をmain.pyで順に処理し、方式比較用のサマリーへ集約する。
+"""複数動画をrun_detection.pyで順に処理し、結果をサマリーへ集約する。
 
-ROI方式の scripts/04_multi_video_mae.py に相当する。2ライン方式のmain.pyは
-1動画ずつしか扱わないため、Gate 4の同条件計測には動画ごとの実行と結果の集約が要る。
+run_detection.pyは1動画ずつしか扱わないため、同条件での複数動画計測には
+動画ごとの実行と結果の集約が要る。
 
 **各runは独立したサブプロセスで走らせる。** 理由が2つある。
 
 1. `load_dotenv` は既存の環境変数を上書きしない。同一プロセスで2つの.envを
    読むと後から読んだほうが無視されるため、画角ごとに設定を切り替えられない。
-2. YOLOモデルとトラッカーの状態をrun間で持ち越さない。ROI方式が
-   prepare_model_for_run で行っている初期化を、プロセス分離で保証する。
+2. YOLOモデルとトラッカーの状態をrun間で持ち越さない。
 
-閾値スイープは行わない。2ライン方式には探索対象のパラメータが無いため、
-04_multi_video_mae.py の組み合わせループに相当するものは存在しない。
+閾値スイープは行わない。2ライン方式には探索対象のパラメータが無い。
 
 出力:
     data/outputs/{EXP_NAME}/
     ├── {video_stem}/
-    │   ├── logs/events_<timestamp>.json   # main.pyが書く
+    │   ├── logs/events_<timestamp>.json   # run_detection.pyが書く
     │   └── manifests/<execution_id>.json  # 同上
     └── summary.csv                        # 本スクリプトが集約する
 """
@@ -29,10 +27,12 @@ import subprocess
 import sys
 from pathlib import Path
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
 # ── パラメータ ──────────────────────────────────────────────────────────────
 # 画角が異なる動画は設定ファイルを分ける。newcam.envは新画角5本、img2787.envは
-# 旧画角。比較条件（model/conf/iou/classes/imgsz/tracker/device/warmup）は両者で
-# 同一にしてあり、ROI方式の確定runとcomparison_keyが一致するよう揃えてある。
+# 旧画角。比較条件（model/conf/iou/classes/imgsz/tracker/device/warmup）は
+# 両者で同一にしてある。
 VIDEOS = [
     ("data/inputs/1787008160.558032.mp4", "newcam.env"),
     ("data/inputs/1787009706.719727.mp4", "newcam.env"),
@@ -42,8 +42,7 @@ VIDEOS = [
     ("data/inputs/IMG_2787.MOV", "img2787.env"),
 ]
 
-# GTはROI方式と同一のファイルを見る。両方式が同じ正解を参照することが比較の前提。
-GT_DIR = os.getenv("GT_DIR", "../roi-counter/data/inputs/configs")
+GT_DIR = os.getenv("GT_DIR", "data/inputs/configs")
 EXP_NAME = os.getenv("EXP_NAME", "gate4_2line")
 
 # comparison_keyの突合先。空文字を渡すと突合を行わない。
@@ -85,9 +84,9 @@ def check_inputs() -> None:
 
 
 def run_one(video: str, env: str, out_dir: Path) -> int:
-    """main.pyを1動画ぶん実行する。戻り値は終了コード。"""
+    """run_detection.pyを1動画ぶん実行する。戻り値は終了コード。"""
     cmd = [
-        sys.executable, "main.py",
+        sys.executable, str(REPO_ROOT / "scripts" / "run_detection.py"),
         "--input", video,
         "--env", env,
         "--gt", str(gt_path_for(video)),

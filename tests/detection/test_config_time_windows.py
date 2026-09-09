@@ -5,7 +5,7 @@
 """
 import pytest
 
-from detection.config import Config
+from tracking_parking.config import Config
 
 # from_env が必須とする最小限のenv。
 REQUIRED = {

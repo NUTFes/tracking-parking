@@ -9,11 +9,9 @@ import sys
 from pathlib import Path
 from typing import Any
 
-sys.path.insert(0, str(Path(__file__).parents[1]))  # raspi/（common 共有のため）
-
-from common.event_matching import PredictedEvent
-from common.ground_truth import load_ground_truth
-from eval import build_event_accuracy_rows
+from tracking_parking.common.event_matching import PredictedEvent
+from tracking_parking.common.ground_truth import load_ground_truth
+from tracking_parking.eval import build_event_accuracy_rows
 
 
 def collect_eval_rows(

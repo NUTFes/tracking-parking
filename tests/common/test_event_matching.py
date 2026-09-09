@@ -1,4 +1,4 @@
-from common.event_matching import GtEvent, PredictedEvent, match_events
+from tracking_parking.common.event_matching import GtEvent, PredictedEvent, match_events
 
 
 def test_perfect_match_across_directions():

@@ -1,23 +1,8 @@
-import importlib.util
-import sys
-from pathlib import Path
-
 import pytest
 
+import run_detection as line_main
 
-LINE_ROOT = Path(__file__).parents[1]
-RASPI_ROOT = LINE_ROOT.parent
-sys.path.insert(0, str(LINE_ROOT))
-sys.path.insert(0, str(RASPI_ROOT))
-
-spec = importlib.util.spec_from_file_location(
-    "line_detection_main_identity", LINE_ROOT / "main.py"
-)
-line_main = importlib.util.module_from_spec(spec)
-sys.modules[spec.name] = line_main
-spec.loader.exec_module(line_main)
-
-from common.run_identity import build_condition_key
+from tracking_parking.common.run_identity import build_condition_key
 
 
 BASE_RUN_CONFIG = {

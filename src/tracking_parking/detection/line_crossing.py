@@ -6,7 +6,7 @@
 import math
 from dataclasses import dataclass
 from typing import Tuple, Optional, List
-from detection.config import Line
+from tracking_parking.config import Line
 
 
 def side_of_line(point: Tuple[float, float],

@@ -1,17 +1,13 @@
 import csv
 import json
-import sys
 from pathlib import Path
 
 import pytest
 
 
-RASPI_ROOT = Path(__file__).parents[2]
-sys.path.insert(0, str(RASPI_ROOT))
-
-from common.event_matching import PredictedEvent, match_events
-from common.ground_truth import GroundTruth, GtEvent
-from eval.build_event_accuracy_rows import build_eval_row, write_eval_rows
+from tracking_parking.common.event_matching import PredictedEvent, match_events
+from tracking_parking.common.ground_truth import GroundTruth, GtEvent
+from tracking_parking.eval.build_event_accuracy_rows import build_eval_row, write_eval_rows
 
 
 def make_ground_truth() -> GroundTruth:

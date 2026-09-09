@@ -6,8 +6,8 @@
 import cv2
 import numpy as np
 from typing import Dict, Tuple
-from detection.config import Line
-from detection.tracker import VehicleTracker, VehicleState
+from tracking_parking.config import Line
+from tracking_parking.detection.tracker import VehicleTracker, VehicleState
 
 
 class VideoAnnotator:

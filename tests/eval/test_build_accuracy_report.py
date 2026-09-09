@@ -1,14 +1,7 @@
 import json
-import sys
 from pathlib import Path
 
-
-RASPI_ROOT = Path(__file__).parents[2]
-LINE_ROOT = RASPI_ROOT / "line_detection"
-sys.path.insert(0, str(LINE_ROOT))
-sys.path.insert(0, str(RASPI_ROOT))
-
-from build_accuracy_report import build_accuracy_report
+from tracking_parking.eval.build_accuracy_report import build_accuracy_report
 
 
 def write_events_file(

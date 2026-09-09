@@ -2,7 +2,7 @@ import hashlib
 
 import pytest
 
-from common.frame_timing import (
+from tracking_parking.common.frame_timing import (
     FrameTiming,
     build_comparison_key,
     elapsed_timer,
@@ -81,7 +81,7 @@ def test_comparison_key_is_stable_and_sensitive_to_conditions():
 
 def test_elapsed_timer_synchronizes_before_and_after(monkeypatch):
     clock = iter([1.0, 1.025])
-    monkeypatch.setattr("common.frame_timing.time.perf_counter", lambda: next(clock))
+    monkeypatch.setattr("tracking_parking.common.frame_timing.time.perf_counter", lambda: next(clock))
     sync_calls = []
 
     with elapsed_timer(lambda: sync_calls.append("sync")) as elapsed:

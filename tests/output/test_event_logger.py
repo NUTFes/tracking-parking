@@ -1,12 +1,7 @@
 import json
-import sys
 from pathlib import Path
 
-
-LINE_ROOT = Path(__file__).parents[1]
-sys.path.insert(0, str(LINE_ROOT))
-
-from result_output.event_logger import EventLogger
+from tracking_parking.output.event_logger import EventLogger
 
 
 TRACKER_SUMMARY = {

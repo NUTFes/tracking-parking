@@ -23,8 +23,6 @@ import json
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parents[1]))   # raspi/（common 共有のため）
-
 # ── 設定 ────────────────────────────────────────────────────────────────────
 WANDB_PROJECT_PATH = "tracking-parking"   # 例: "entity/project" or "project"
 EVAL_UNIT = "event"                        # "event" or "detection"

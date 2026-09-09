@@ -7,8 +7,8 @@ import json
 from pathlib import Path
 from typing import Any, Sequence
 
-from common.event_matching import PredictedEvent, match_events
-from common.ground_truth import GroundTruth
+from tracking_parking.common.event_matching import PredictedEvent, match_events
+from tracking_parking.common.ground_truth import GroundTruth
 
 
 def build_eval_row(

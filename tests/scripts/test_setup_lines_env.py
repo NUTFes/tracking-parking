@@ -10,7 +10,7 @@ roi-counter の roi_config.py と同じ契約（書き込むのは対象キー�
 """
 import pytest
 
-from line_setup.setup_lines import (
+from setup_lines import (
     LINE_ENV_KEYS,
     apply_line_values,
     build_line_env_values,

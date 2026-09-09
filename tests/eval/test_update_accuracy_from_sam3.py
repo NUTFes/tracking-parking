@@ -1,12 +1,8 @@
-import sys
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).parents[2]))  # raspi/
-
-from eval.update_accuracy_from_sam3 import AmbiguousRunError, find_run
+from tracking_parking.eval.update_accuracy_from_sam3 import AmbiguousRunError, find_run
 
 
 class FakeApi:

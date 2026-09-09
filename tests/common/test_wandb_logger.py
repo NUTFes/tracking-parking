@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from common.wandb_logger import (
+from tracking_parking.common.wandb_logger import (
     build_exp_key,
     ExperimentLogger,
     next_log_boundary,
