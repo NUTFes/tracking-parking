@@ -14,27 +14,33 @@
 ## ディレクトリ構造
 
 ```
-raspi/line_detection/
-├── .env                           # 環境設定
+tracking-parking/
+├── .env                           # 環境設定(ローカル)
 ├── .env.template                  # 設定テンプレート
-├── requirements.txt               # 依存パッケージ
-├── README.md                      # このファイル
-├── main.py                        # メイン処理
+├── pyproject.toml                 # 依存パッケージ定義(uv)
 │
-├── line_setup/                    # ライン座標設定ツール
-│   └── setup_lines.py            # GUIでライン位置を設定
+├── scripts/                       # CLIエントリポイント
+│   ├── run_detection.py          # メイン処理
+│   ├── setup_lines.py            # GUIでライン位置を設定
+│   ├── visualize_lines.py        # ライン・車両代表点の可視化
+│   └── run_multi_video.py        # 複数動画の一括処理と集約
 │
-├── detection/                     # 車両検知・ライン交差判定
+├── src/tracking_parking/          # 本体パッケージ
 │   ├── config.py                 # 設定管理
-│   ├── line_crossing.py          # ライン交差検知(外積法)
-│   └── tracker.py                # 車両トラッキング・状態管理
+│   ├── detection/                # 車両検知・ライン交差判定
+│   │   ├── line_crossing.py     # ライン交差検知(外積法)
+│   │   └── tracker.py           # 車両トラッキング・状態管理
+│   ├── output/                   # 結果出力
+│   │   ├── video_writer.py      # アノテーション動画生成
+│   │   └── event_logger.py      # イベントログ出力
+│   ├── common/                   # 計測・GT・W&Bの共通基盤
+│   └── eval/                     # 精度評価
 │
-├── result_output/                 # 結果出力
-│   ├── video_writer.py           # アノテーション動画生成
-│   └── event_logger.py           # イベントログ出力
-│
-└── data/                          # データ
+├── tests/                         # テスト
+├── models/                        # YOLOモデル重み(.pt、Git管理外)
+└── data/                          # データ(Git管理外)
     ├── inputs/                   # 入力動画(.mp4)
+    │   └── configs/              # 正解台数GT(<動画名>_gt.json)
     └── outputs/                  # 出力結果
         ├── videos/               # アノテーション済み動画
         └── logs/                 # イベントログ(JSON/CSV)
@@ -67,7 +73,7 @@ uv sync
 GUIツールを使って2本のラインと駐車場基準点を設定します:
 
 ```bash
-python line_setup/setup_lines.py --video data/inputs/test.mp4
+python scripts/setup_lines.py --video data/inputs/test.mp4
 ```
 
 **操作方法:**
@@ -97,7 +103,7 @@ cp /path/to/your/video.mp4 data/inputs/
 ### 基本的な使用方法
 
 ```bash
-python main.py --input data/inputs/test.mp4
+python scripts/run_detection.py --input data/inputs/test.mp4
 ```
 
 ### リアルタイム表示
@@ -105,19 +111,19 @@ python main.py --input data/inputs/test.mp4
 処理中の動画を表示しながら実行:
 
 ```bash
-python main.py --input data/inputs/test.mp4 --display
+python scripts/run_detection.py --input data/inputs/test.mp4 --display
 ```
 
 ### カメラからリアルタイム処理
 
 ```bash
-python main.py --camera 0 --display
+python scripts/run_detection.py --camera 0 --display
 ```
 
 ### 出力先を指定
 
 ```bash
-python main.py --input data/inputs/test.mp4 --output /path/to/output
+python scripts/run_detection.py --input data/inputs/test.mp4 --output /path/to/output
 ```
 
 ### 方式間の速度比較
@@ -135,7 +141,7 @@ ROI方式の現在の既定値は`VEHICLE_CLASSES=2,7`、`CONFIDENCE_THRESHOLD=0
 ```bash
 WARMUP_FRAMES=30 YOLO_DEVICE=cpu YOLO_IMGSZ=640 \
 YOLO_TRACKER=botsort.yaml SAVE_VIDEO=false SHOW_DISPLAY=false \
-WANDB_MODE=offline python main.py --input data/inputs/test.mp4 \
+WANDB_MODE=offline python scripts/run_detection.py --input data/inputs/test.mp4 \
   --wandb --device-name raspi5
 ```
 
@@ -164,8 +170,8 @@ wandb sync <run_dir>
 無視する。
 
 ```bash
-python main.py --input data/inputs/test.mp4 \
-  --gt ../roi-counter/data/inputs/configs/IMG_2787_gt.json
+python scripts/run_detection.py --input data/inputs/test.mp4 \
+  --gt data/inputs/configs/IMG_2787_gt.json
 ```
 
 `--gt`を省略した場合は`<動画名>_gt.json`を入力動画と同じディレクトリから

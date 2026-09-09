@@ -3,10 +3,7 @@
 2ライン検知ロジックが期待どおり動くことを、実動画1本に対して端から端まで確認する手順。
 新しい環境で動かすとき、判定ロジックを変更したとき、ROI方式と比較するときに使う。
 
-対象ブランチ: `experiment/ucn/two-lines-detection`
-対象ディレクトリ: `raspi/line_detection/`
-
-ROI方式の検証手順は `raspi/roi-counter/VERIFICATION.md`（`feat/mike/89-bbox-analysis-within-roi`）にある。
+ROI方式の検証手順は `raspi/roi-counter/VERIFICATION.md`（`feat/mike/89-bbox-analysis-within-roi` ブランチ）にある。
 
 ## 0. 前提条件
 
@@ -14,11 +11,11 @@ ROI方式の検証手順は `raspi/roi-counter/VERIFICATION.md`（`feat/mike/89-
 - 実動画がローカルに存在すること。`data/` は `.gitignore` 対象なので、
   リポジトリを新しく取得した環境では別途配置が必要
   - `data/inputs/IMG_2787.MOV`
-  - GT（正解台数）は ROI方式と共有する: `../roi-counter/data/inputs/configs/IMG_2787_gt.json`
+  - GT（正解台数）は ROI方式と共有する: `data/inputs/configs/IMG_2787_gt.json`
 - `.env` が存在すること（`.gitignore` 対象。無ければ 2章で作成する）
 - 1回の実行に数分〜十数分かかる（YOLO推論を含むため）
 
-以降のコマンドは断りがない限り `raspi/line_detection/` をカレントディレクトリとして書く。
+以降のコマンドは断りがない限り `` をカレントディレクトリとして書く。
 
 ### W&B（実験記録）について
 
@@ -47,7 +44,7 @@ grep -q "api.wandb.ai" ~/.netrc && echo "ログイン済み" || echo "未ログ�
 溜まり続けるだけで、W&B上では一切参照できない**。manifestに記録される
 `wandb_run_id` も、同期するまではW&B上に対応する実体が無い点に注意すること。
 
-> **`WANDB_DIR=data/outputs` を省略しないこと。** `raspi/common/wandb_logger.py` の
+> **`WANDB_DIR=data/outputs` を省略しないこと。** `src/tracking_parking/common/wandb_logger.py` の
 > `wandb.init()` は `dir` を渡していないため、未指定だとwandbが**カレントディレクトリ直下**に
 > `wandb/` を作る。`data/` の外に出るとgitignoreの対象外になり、run一式を失いやすい
 > （ROI方式で実際に一度失っている）。
@@ -73,8 +70,8 @@ grep -q "api.wandb.ai" ~/.netrc && echo "ログイン済み" || echo "未ログ�
 リトライを打ち切るには `x_graphql_retry_max`（`x_` 接頭辞は内部オプション）に頼るしかない。
 
 打ち切って例外を上げた場合、現在の実装では計測が丸ごと失われる。
-`raspi/common/wandb_logger.py` の `wandb.init()` は try/except で包んでおらず、
-`ExperimentLogger` の生成は `main.py` のフレーム処理を囲む `try:` より前にある。
+`src/tracking_parking/common/wandb_logger.py` の `wandb.init()` は try/except で包んでおらず、
+`ExperimentLogger` の生成は `scripts/run_detection.py` のフレーム処理を囲む `try:` より前にある。
 例外は `try`/`finally` の外側で発生するので、1フレームも処理しないまま終了し、
 `manifests/` も残らない。
 
@@ -104,20 +101,17 @@ W&Bは `--wandb` または `USE_WANDB=true` で明示的に有効化したとき
 リポジトリルートから実行する。
 
 ```bash
-uv run pytest raspi/ -q
+uv run pytest -q
 ```
 
-**合格基準**: 全件パス（2026-08-20 時点で 161 passed）。
-
-`raspi/common/` は ROI方式とbyte-identicalで共有しているため、ここを変更した場合は
-ROI方式側のテストも実行すること。
+**合格基準**: 全件パス（2026-09-10 時点で 198 passed）。
 
 ## 2. ライン座標の設定
 
 `.env` が無い場合、または画角が変わった場合はGUIで設定し直す。
 
 ```bash
-uv run python line_setup/setup_lines.py --video data/inputs/IMG_2787.MOV
+uv run python scripts/setup_lines.py --video data/inputs/IMG_2787.MOV
 ```
 
 動画の先頭フレームが表示されるので、次の5点をこの順にクリックする。
@@ -143,13 +137,13 @@ uv run python line_setup/setup_lines.py --video data/inputs/IMG_2787.MOV
 引数は位置指定で `<動画パス> [出力動画パス] [開始フレーム] [終了フレーム]`（既定は 0〜300フレーム）。
 
 ```bash
-uv run python visualize_lines_and_vehicles.py data/inputs/IMG_2787.MOV
+uv run python scripts/visualize_lines.py data/inputs/IMG_2787.MOV
 ```
 
 出力動画として残す場合、およびフレーム範囲を変える場合:
 
 ```bash
-uv run python visualize_lines_and_vehicles.py data/inputs/IMG_2787.MOV debug_vis.mp4 300 600
+uv run python scripts/visualize_lines.py data/inputs/IMG_2787.MOV debug_vis.mp4 300 600
 ```
 
 起動時に `Line1` / `Line2` / `駐車場基準点` / `MARGIN_PX` の値が標準出力に表示される。
@@ -161,9 +155,9 @@ uv run python visualize_lines_and_vehicles.py data/inputs/IMG_2787.MOV debug_vis
 ```bash
 USE_WANDB=true WANDB_MODE=offline WANDB_DIR=data/outputs \
   WANDB_PROJECT=tracking-parking \
-  uv run python main.py \
+  uv run python scripts/run_detection.py \
   --input data/inputs/IMG_2787.MOV \
-  --gt ../roi-counter/data/inputs/configs/IMG_2787_gt.json
+  --gt data/inputs/configs/IMG_2787_gt.json
 ```
 
 `count_error` と confidence の内訳はこの run のW&B summary に入る。
@@ -237,9 +231,9 @@ SAVE_VIDEO=false SHOW_DISPLAY=false SAVE_LOGS=true \
 YOLO_DEVICE=cpu YOLO_IMGSZ=640 YOLO_TRACKER=botsort.yaml WARMUP_FRAMES=30 \
 EXP_DEVICE_NAME=raspi5 EXP_DEVICE_ACCELERATOR=cpu \
 USE_WANDB=true WANDB_MODE=offline WANDB_DIR=data/outputs \
-uv run python main.py \
+uv run python scripts/run_detection.py \
   --input data/inputs/IMG_2787.MOV \
-  --gt ../roi-counter/data/inputs/configs/IMG_2787_gt.json \
+  --gt data/inputs/configs/IMG_2787_gt.json \
   --wandb --device-name raspi5
 ```
 
@@ -290,7 +284,7 @@ done
 台数（`count_error`）ではなく、個々のイベントがGTと時刻レベルで対応するかを評価する。
 
 ```bash
-uv run python build_accuracy_report.py \
+uv run python -m tracking_parking.eval.build_accuracy_report \
   --events-dir data/outputs/logs \
   --output data/outputs/event_accuracy.csv
 ```
@@ -322,6 +316,6 @@ uv run python build_accuracy_report.py \
 
 ## 10. 関連資料
 
-- `README.md` — システム構成、設定パラメータ、アルゴリズムの解説
+- `docs/two-line-system.md` — システム構成、設定パラメータ、アルゴリズムの解説
 - `docs/wandb_integration_spec_v2.md` — 実験記録の仕様
-- `raspi/roi-counter/VERIFICATION.md` — ROI方式の検証手順（別ブランチ）
+- `raspi/roi-counter/VERIFICATION.md` — ROI方式の検証手順（`feat/mike/89-bbox-analysis-within-roi` ブランチ）

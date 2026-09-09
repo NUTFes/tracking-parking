@@ -9,7 +9,7 @@
 
 ## 0. このドキュメントの目的
 
-`raspi/` 配下の駐車場入出庫カウントシステムに、Weights & Biases（以下 W&B）による実験管理機能を追加する。
+駐車場入出庫カウントシステムに、Weights & Biases（以下 W&B）による実験管理機能を追加する。
 本システムには検出ロジックが 2 系統あり、両者の **性能比較** と、本番デバイス上での **処理速度管理** を目的とする。
 
 - `line_detection/` … 2 ライン + 外積法 + ハイブリッド方式（信頼度付き）
@@ -43,7 +43,7 @@
 8. **ネットワークの無い環境（Raspberry Pi 実機）での計測を第一級ユースケースとする。**
    - `WANDB_MODE` 環境変数（`online` / `offline`）を尊重する。offline 時はローカルに記録され、後日 `wandb sync` でアップロードできる。
    - README（または各スクリプトの docstring）に offline 計測 → sync の手順を 3〜4 行で記載すること。
-   - **運用は `offline` に固定する（2026-08-26 決定）**。`online` はネットワークへ到達できない環境で `wandb.init()` がハングし、`WANDB_INIT_TIMEOUT` でも `Settings(init_timeout)` でも打ち切れない。実測値と根拠は `raspi/line_detection/VERIFICATION.md` の0章に記載した。
+   - **運用は `offline` に固定する（2026-08-26 決定）**。`online` はネットワークへ到達できない環境で `wandb.init()` がハングし、`WANDB_INIT_TIMEOUT` でも `Settings(init_timeout)` でも打ち切れない。実測値と根拠は `VERIFICATION.md` の0章に記載した。
    - **本番運用では `--wandb` / `USE_WANDB` を付けない（2026-08-26 決定）**。ネットワーク断が入出庫カウントの停止に直結する状態を、24/7で動く監視系へ持ち込まないため。ROI方式の `main.py` も同じ理由でW&B非対応のままとする。
 
 ---
@@ -204,7 +204,7 @@ W&B では `comparison_key` が一致する ROI / 2 ライン run のみを直�
 
 ## 3. 実装するモジュール
 
-### 3.1 共通ユーティリティ `raspi/common/wandb_logger.py`（新規作成）
+### 3.1 共通ユーティリティ `src/tracking_parking/common/wandb_logger.py`（新規作成）
 
 両ロジックから共有する薄いラッパを作る。W&B 無効時は no-op になること。
 
@@ -230,14 +230,14 @@ W&B では `comparison_key` が一致する ROI / 2 ライン run のみを直�
 - **呼び出し側は `finish()` を必ず `try/finally` で保証する**（§4 各所に明記）。カメラ切断・例外・Ctrl+C でも run が "running" のまま放置されないこと。異常終了時は `exit_code=1` で finish する。
 - 長時間のカメラ運用向けに `update_running_summary(self, d: dict)`（処理途中の count_in/out 等を summary へ随時反映するだけの薄いメソッド）を用意する。クラッシュしても直近の集計が残る。
 
-### 3.1a run識別ユーティリティ `raspi/common/run_identity.py`
+### 3.1a run識別ユーティリティ `src/tracking_parking/common/run_identity.py`
 
 - `build_condition_key(condition)`は型付きcanonical JSONをSHA-256化する。floatの表示丸めや辞書挿入順に依存しない。
 - `build_run_identity()`は同一条件でも毎回異なる`execution_id`を生成する。
 - `collect_reproducibility_info()`はGit SHA、dirty状態、Python・主要ライブラリ版を返す。
 - `write_run_manifest()`はW&Bの有効・無効に関係なく、ID、config、出力パスをJSONへ保存する。
 
-### 3.2 統計ユーティリティ `raspi/common/frame_stats.py`（新規作成）
+### 3.2 統計ユーティリティ `src/tracking_parking/common/frame_stats.py`（新規作成）
 
 - `compute_frame_stats(frame_ms_list: list[float], source_fps: float) -> dict`
   - min / max / mean / p50 / p95 / p99 / total_ms / effective_fps / realtime_ok を返す。
@@ -246,19 +246,14 @@ W&B では `comparison_key` が一致する ROI / 2 ライン run のみを直�
 
 ### 3.3 共通モジュールの import 経路（重要・未指定だと迷う）
 
-両プロジェクトは既に `sys.path.insert(0, <自ルート>)` スタイルなので、これに合わせる。パッケージ化（pip install -e）は今回しない。
+本仕様の策定時は両方式が `sys.path.insert(0, <自ルート>)` スタイルだったが、
+2ライン方式の採用後に `src` レイアウトへ移行し、`uv sync` によるeditable installで解決している。
 
-- `raspi/common/__init__.py` を作成する。
-- 各スクリプトの既存 `sys.path.insert` の直後に、`raspi/` ディレクトリも追加する:
-  ```python
-  # 例: raspi/roi-counter/scripts/02_run_analysis.py の場合
-  sys.path.insert(0, str(Path(__file__).parents[1]))   # 既存: roi-counter/
-  sys.path.insert(0, str(Path(__file__).parents[2]))   # 追加: raspi/
-  from common.wandb_logger import ExperimentLogger
-  from common.run_identity import build_condition_key, build_run_identity
-  from common.frame_stats import compute_frame_stats
-  ```
-- `line_detection/main.py` は `os.path.dirname` スタイルなのでそれに合わせて親ディレクトリを追加する。
+```python
+from tracking_parking.common.wandb_logger import ExperimentLogger
+from tracking_parking.common.run_identity import build_condition_key, build_run_identity
+from tracking_parking.common.frame_stats import compute_frame_stats
+```
 
 ---
 
@@ -291,7 +286,7 @@ W&B では `comparison_key` が一致する ROI / 2 ライン run のみを直�
 - `detail_rows`（既存CSV）に`wandb_run_id`、`execution_id`、`condition_key`列を追加してCSVとW&Bを相互参照可能にする。
 - 既存の `results.csv` / `mae_summary.csv` 出力は維持する。
 
-### 4.3 `line_detection/main.py`
+### 4.3 `scripts/run_detection.py`
 
 - `process_video()` に W&B 連携を追加。
 - `config`は`logic_name="line_detection"`、Line1・Line2の全座標、駐車場基準点、
@@ -307,7 +302,7 @@ W&B では `comparison_key` が一致する ROI / 2 ライン run のみを直�
 
 ---
 
-## 5. 後追い精度評価スクリプト `raspi/eval/update_accuracy_from_sam3.py`（新規作成・雛形のみ）
+## 5. 後追い精度評価スクリプト `src/tracking_parking/eval/update_accuracy_from_sam3.py`（新規作成・雛形のみ）
 
 SAM3 の GT が揃った後に実行する独立スクリプト。**run の再開ではなく W&B API 経由で既存 run の summary を更新する**方針（実行と評価を分離するため）。
 
@@ -365,7 +360,7 @@ SAM3 の GT が揃った後に実行する独立スクリプト。**run の再�
 1. `common/frame_stats.py`、`common/wandb_logger.py`、`common/run_identity.py`（no-op経路・識別子・manifestテスト含む）。
 2. `roi-counter/scripts/02_run_analysis.py` への差し込み（最小構成の検証）。
 3. `roi-counter/scripts/04_multi_video_mae.py`（スイープ → 複数 run、トラッカーリセット含む）。
-4. `line_detection/main.py`。
+4. `scripts/run_detection.py`。
 5. `eval/update_accuracy_from_sam3.py`（雛形 + dry-run）。
 6. requirements 更新・README への offline 手順追記。
 
