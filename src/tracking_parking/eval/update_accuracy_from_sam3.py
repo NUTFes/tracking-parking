@@ -3,7 +3,7 @@
 SAM3 の GT が揃った後に、既存 W&B run の summary に精度指標を後追い書き込むスクリプト（雛形）。
 
 【実行と評価の分離】
-本システムの計測スクリプト（02_run_analysis.py / 04_multi_video_mae.py / line_detection/main.py）は
+本システムの計測スクリプト（scripts/run_detection.py）は
 速度・台数のみを即時記録し、精度系 summary キーは None で確保している。SAM3 の GT が揃った後に
 本スクリプトを独立実行し、W&B API 経由で同一 run の summary を更新する（run の再開はしない）。
 
@@ -14,9 +14,9 @@ SAM3 の GT が揃った後に、既存 W&B run の summary に精度指標を�
 
 使い方:
     # 書き込まずに対象 run と予定値だけ確認
-    python update_accuracy_from_sam3.py --input eval_results.csv --dry-run
+    python -m tracking_parking.eval.update_accuracy_from_sam3 --input eval_results.csv --dry-run
     # 実際に summary を更新
-    python update_accuracy_from_sam3.py --input eval_results.csv
+    python -m tracking_parking.eval.update_accuracy_from_sam3 --input eval_results.csv
 """
 import argparse
 import json

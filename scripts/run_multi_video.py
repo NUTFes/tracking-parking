@@ -45,11 +45,9 @@ VIDEOS = [
 GT_DIR = os.getenv("GT_DIR", "data/inputs/configs")
 EXP_NAME = os.getenv("EXP_NAME", "gate4_2line")
 
-# comparison_keyの突合先。空文字を渡すと突合を行わない。
-ROI_RUN_DIR = os.getenv(
-    "ROI_RUN_DIR",
-    "../roi-counter/data/outputs/exp_adopted_final_gtfix/mae_20260828_062140",
-)
+# comparison_keyの突合先。ROI方式は本リポジトリから削除済みのため既定では突合しない。
+# 過去のROI方式runと比較したい場合のみ、そのrunディレクトリを渡す。
+ROI_RUN_DIR = os.getenv("ROI_RUN_DIR", "")
 # ────────────────────────────────────────────────────────────────────────────
 
 SUMMARY_COLUMNS = (

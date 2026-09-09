@@ -55,7 +55,7 @@ def apply_line_values(existing: str, values: dict) -> str:
     if remaining:
         if lines and lines[-1].strip():
             lines.append("")
-        lines.append("# ライン座標（line_setup/setup_lines.pyが書き込む）")
+        lines.append("# ライン座標（scripts/setup_lines.pyが書き込む）")
         for key in LINE_ENV_KEYS:
             if key in remaining:
                 lines.append(f"{key}={remaining[key]}")
