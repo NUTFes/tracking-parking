@@ -1,0 +1,378 @@
+# 実験管理機能（Weights & Biases 連携）実装指示書 v2
+
+> v1 からの主な変更: オフラインモード対応（§1-8, §6）、スイープ時のトラッカー状態リセット（§4.2）、
+> フレームログのダウンサンプリング（§2.3）、異常終了時の finish 保証（§3.1）、run識別規則の一元化（§3.1a）、
+> 共通モジュールの import 経路指定（§3.3）、W&B Artifact のオプション項目追加（§10）。
+>
+> このドキュメントは git 管理下の正式な契約書である（Issue #102 にて .gitignore の docs/ 一括除外に例外を追加し追跡開始）。
+> 実装との乖離が見つかった場合は、実装かこのドキュメントのどちらかを速やかに追随させること。
+
+## 0. このドキュメントの目的
+
+`raspi/` 配下の駐車場入出庫カウントシステムに、Weights & Biases（以下 W&B）による実験管理機能を追加する。
+本システムには検出ロジックが 2 系統あり、両者の **性能比較** と、本番デバイス上での **処理速度管理** を目的とする。
+
+- `line_detection/` … 2 ライン + 外積法 + ハイブリッド方式（信頼度付き）
+- `roi-counter/` … ROI 内の進行度 `s` による状態機械
+
+精度指標（Accuracy / Precision / Recall / F1）は **SAM3 による GT を用いて後日別スクリプトで算出する**ため、本実装では「速度・台数の即時記録」と「精度を後から同一 run へ追記できる仕組み」を分けて作る。
+
+---
+
+## 1. 設計の大原則（必ず守ること）
+
+1. **記録粒度を 3 層に分ける。**
+   - `config`（run 開始時に固定するスカラ設定）
+   - `summary`（run 終了時の単一スカラ結果）
+   - `time-series`（フレーム / イベントごとの `wandb.log(step=...)`）
+2. **比較したくなりそうな軸は、値が未定でも config キーとして必ず用意する**（未使用なら既定値か `None`）。config に無い軸は後から比較できない。
+3. **精度系の summary キーは、データが無くても `None` で先に確保する**。後追いスクリプトが同じスキーマへ書き込めるようにするため。
+   - 注意: W&B のテーブル UI では値が全 run で `None` の間は列が表示されないことがあるが、キー自体は保存されるので問題ない。後追い書き込み後に列が現れる。
+4. **runの条件と個々の実行を別の識別子で管理する。**
+   - `condition_key`: 結果へ影響する条件の型付きcanonical JSONから生成するhash。同条件の再実行では同じ値。
+   - `execution_id`: 実行ごとに生成するUUID。同条件の再実行でも異なる値。
+   - `wandb_run_id`: W&Bが発行するID。ローカルmanifestにも保存する。
+   - `exp_key`は移行期間中のみ`condition_key`のaliasとして残す。
+5. **時系列メトリクスは後から遡及追加できない**。最初に `wandb.log` する辞書へ余分めにキーを用意しておく。スカラ（summary / config）は後付け可。
+6. 既存スクリプトの**コア処理ロジック（検出・カウント・MAE 算出）は原則変更しない**。W&B 連携は addon として差し込む。
+   - **唯一の例外**: §4.2 のトラッカー状態リセット。これは実験の独立性（run 比較の妥当性）に直結するため修正を許可する。
+7. **W&B を無効化できるフラグ**（`USE_WANDB` / 環境変数）を用意し、オフ時は既存挙動と完全に一致させる。CI やオフライン実行で壊れないこと。
+   - 「既存挙動と完全一致」の具体的な意味: JSON/CSV の**キー集合・列集合・列順序**が W&B 導入前と完全に一致すること。
+     `02_run_analysis.py` の `result.json` は元々この条件を満たす（`append_to_result_json` は無効時 no-op）。
+     `04_multi_video_mae.py` の `results.csv` は Issue #102 で修正: `wandb_run_id` / `exp_key` 列は `USE_WANDB=true` のときのみ追加する。
+8. **ネットワークの無い環境（Raspberry Pi 実機）での計測を第一級ユースケースとする。**
+   - `WANDB_MODE` 環境変数（`online` / `offline`）を尊重する。offline 時はローカルに記録され、後日 `wandb sync` でアップロードできる。
+   - README（または各スクリプトの docstring）に offline 計測 → sync の手順を 3〜4 行で記載すること。
+   - **運用は `offline` に固定する（2026-08-26 決定）**。`online` はネットワークへ到達できない環境で `wandb.init()` がハングし、`WANDB_INIT_TIMEOUT` でも `Settings(init_timeout)` でも打ち切れない。実測値と根拠は `raspi/line_detection/VERIFICATION.md` の0章に記載した。
+   - **本番運用では `--wandb` / `USE_WANDB` を付けない（2026-08-26 決定）**。ネットワーク断が入出庫カウントの停止に直結する状態を、24/7で動く監視系へ持ち込まないため。ROI方式の `main.py` も同じ理由でW&B非対応のままとする。
+
+---
+
+## 2. 記録する情報の定義
+
+### 2.1 config（run 開始時に固定）
+
+| キー | 型 | 説明 | 取得元 |
+|---|---|---|---|
+| `logic_name` | str | 検出ロジック名。`"line_detection"` または `"roi_counter"` | スクリプト側で固定指定 |
+| `dataset` | str | 対象データ名（動画 stem 等） | `VIDEO_SOURCE` から導出 |
+| `input_type` | str | `"file"` or `"camera"` | `VIDEO_SOURCE` の型で判定 |
+| `device_name` | str | 処理デバイス名（例 `"raspi5"`, `"macbook_m1"`） | 環境変数 `EXP_DEVICE_NAME`（未設定なら `platform.node()` をフォールバック） |
+| `device_accelerator` | str | `"cpu"` / `"cuda"` / `"coral"` 等 | 環境変数 or 自動判定 |
+| `model_path` | str | 使用した重みファイル名 | 各スクリプトのモデル指定 |
+| `input_sha256` / `model_sha256` | str | 入力内容とモデル重みのhash | 共通hash関数 |
+| `roi_points` | list | ROIの全頂点座標 | roi-counter |
+| `frame_width` | int | 入力解像度 幅 | `cv2.CAP_PROP_FRAME_WIDTH` |
+| `frame_height` | int | 入力解像度 高さ | `cv2.CAP_PROP_FRAME_HEIGHT` |
+| `source_fps` | float | 入力動画の FPS | `cv2.CAP_PROP_FPS` |
+| `vehicle_classes` | list | 検出対象クラス | 各スクリプト |
+| `tracker_reset` | bool | run 開始時にトラッカー状態をリセットしたか（§4.2 参照） | スクリプト |
+| `log_interval_sec` | float | 時系列ログの間引き間隔（秒、相対経過時間ベース）。0 以下・NaN・inf は起動時にエラー（§2.3 参照） | 環境変数 `LOG_INTERVAL_SEC`（既定 5 秒） |
+| **YOLO config** | | | |
+| `yolo_conf` | float | confidence_threshold | `model.track()` に実際に渡した値と完全一致させる（記録専用の別定数を持たせてはならない） |
+| `yolo_iou` | float | iou_threshold | `model.track()` に実際に渡した値と完全一致させる（記録専用の別定数を持たせてはならない） |
+| `yolo_device` | str/None | model.track() に渡す device 指定 | 環境変数 `YOLO_DEVICE`（既定 None＝Ultralytics 自動選択） |
+| `yolo_imgsz` / `tracker_config` | int/str | 実際の入力サイズとtracker設定 | `model.track()` 引数 |
+| **ロジック別パラメータ** | | | |
+| `s_low` / `s_high` | float | roi-counter の閾値 | roi-counter のみ |
+| `margin` / `max_frame_gap` / `cleanup_threshold` | num | line_detection のパラメータ | line_detection のみ |
+| `line1_points` / `line2_points` | list | 各ラインの始点・終点 | line_detection のみ |
+| `parking_reference_point` | list | 駐車場側を決める基準点 | line_detection のみ |
+| **run識別・再現情報（必須）** | | | |
+| `condition_key` | str | `build_condition_key()`で生成する条件hash | `common.run_identity` |
+| `execution_id` | str | 実行ごとのUUID | `common.run_identity` |
+| `display_name` | str | UI向け可読名（一意性には使わない） | `common.run_identity` |
+| `git_sha` / `git_dirty` | str/bool | 実行コードの版とdirty状態 | `common.run_identity` |
+| `library_versions` | dict | Pythonと主要ライブラリ版 | `common.run_identity` |
+| `exp_key` | str | `condition_key`の後方互換alias | 共通ユーティリティ |
+
+### 2.2 summary（run 終了時のスカラ）
+
+| キー | 型 | 説明 | この実装で値を入れるか |
+|---|---|---|---|
+| `count_in` | int | 入庫数 | ○ |
+| `count_out` | int | 出庫数 | ○ |
+| `total_frames` | int | 総フレーム数 | ○ |
+| `total_ms` | float | 総処理時間 | ○ |
+| `frame_ms_mean` | float | 1 フレーム平均処理時間 | ○ |
+| `frame_ms_min` | float | 最速 | ○ |
+| `frame_ms_max` | float | 最遅 | ○ |
+| `frame_ms_p50` | float | 中央値 | ○ |
+| `frame_ms_p95` | float | p95（本番カクつき評価用） | ○ |
+| `frame_ms_p99` | float | p99 | ○ |
+| `effective_fps` | float | `1000 / frame_ms_mean` | ○ |
+| `realtime_ok` | bool | `effective_fps >= source_fps` | ○ |
+| `count_error` | int/None | `|in-gt_in| + |out-gt_out|`（GT があれば） | △（GT 次第） |
+| `gt_in` / `gt_out` | int/None | 台数の真値 | △ |
+| **精度系（後追いで埋める。今は None で確保）** | | | |
+| `accuracy` | float/None | | × → `None` |
+| `precision` | float/None | | × → `None` |
+| `recall` | float/None | | × → `None` |
+| `f1` | float/None | | × → `None` |
+| `tp` / `fp` / `fn` / `tn` | int/None | 混同行列の素値 | × → `None` |
+| `eval_unit` | str/None | `"event"` or `"detection"`（評価単位） | × → `None` |
+| `gt_source` | str/None | `"sam3"` / `"manual"` 等 | × → `None` |
+
+### 2.3 time-series（`wandb.log(step=frame_idx)`）
+
+| キー | 説明 |
+|---|---|
+| `frame_ms` | そのフレームの処理時間 |
+| `net_flow` | `count_in - count_out` の逐次値（初期駐車台数の絶対値ではなく、あくまで純増減 = net flow） |
+| `cumulative_in` | 累積入庫数 |
+| `cumulative_out` | 累積出庫数 |
+| `num_tracks` | そのフレームで新たにトラッカー ID が割り当てられた検出数（`len(boxes.id)`、無ければ 0）。ROI フィルタ前の値。 |
+| `retained_states` | 状態保持ストアのサイズ（roi-counter: `len(counter.tracks)`）。`num_tracks` とは意味が異なる（前者はフレーム単位の新規検出数、後者は累積して保持されている track 状態の総数）ため混同しないこと。 |
+
+**間引き（必須要件）**: 毎フレーム log すると長時間のカメラ運用で呼び出し回数・帯域が肥大するため、`log_interval_sec`（秒単位、データセット内の相対経過時間 `t_rel_sec` ベース）でサンプリングする。
+
+- 既定値: 5 秒（環境変数 `LOG_INTERVAL_SEC` で上書き可）。0 以下・NaN・inf は起動時に検証エラーとし、フェイルファストする（`common.wandb_logger.validate_log_interval_sec` で検証）。
+- 間引き中でも **カウントが変化したフレーム（IN/OUT イベント発生時）は必ず log する**（駐車台数推移の階段が欠けないようにするため）。この強制ログは次回の定期サンプリング境界の計算には影響しない（境界はあくまで `t_rel_sec` のみから算出される）。
+- `step` には常に実フレーム番号 `frame_idx` を使う。x 軸（`step_metric`）は `t_rel_sec`（データセット内の相対経過秒）。
+- 境界計算は while ループではなく除算による O(1) 計算で行う（`common.wandb_logger.next_log_boundary`）。フレーム抜け等で `t_rel_sec` が複数区間分ジャンプしても、1 回の計算で正しい次境界に到達する。
+
+### 2.4 速度計測契約（Issue #92、timing schema v2）
+
+ROI 方式と 2 ライン方式の速度を直接比較できるよう、両方式は
+`common/frame_timing.py` の同一フェーズ定義を使う。計測時計は単調増加する
+`time.perf_counter()` とし、単位はすべてミリ秒とする。
+
+| キー | 開始 | 終了 | 含める処理 |
+|---|---|---|---|
+| `read_ms` | `cap.read()` の直前 | 成功したフレームを受け取った直後 | 動画デコード、カメラのフレーム待ち |
+| `inference_tracking_ms` | `model.track()` の直前 | bbox と track ID を CPU 上で利用可能な値に変換した後 | YOLO 前処理・推論・後処理・追跡・デバイスから CPU への転送 |
+| `counting_logic_ms` | CPU 化済みの bbox/ID を受け取った直後 | 方式固有の状態更新と stale track cleanup の終了後 | ROI/進行度判定、またはライン交差判定と IN/OUT 確定 |
+| `core_ms` | 算出値 | 算出値 | `inference_tracking_ms + counting_logic_ms`。方式比較の主対象 |
+| `output_ms` | イベント・描画出力の直前 | 動画書き込み・画面表示の終了後 | イベント記録、アノテーション、`VideoWriter.write()`、`imshow()`、`waitKey()` |
+| `end_to_end_ms` | `cap.read()` の直前 | `output_ms` の終了後 | 1 フレームの本番処理全体。ただし後述の観測処理は除外 |
+
+`wandb.log()`、W&B summary 更新、進捗表示は観測処理であり、ネットワークや
+ローカルバッファの状態を検出方式の速度へ混入させないため、すべての計測区間から
+除外する。計測済みの `end_to_end_ms` を確定してからログを送る。
+
+方式選定の主指標は `core_ms_p95` とする。p95 は warm-up 除外後の 95% の
+フレームがその時間以内に完了したことを表し、平均値では見えにくい実運用上の
+カクつきを評価できる。`p50`、`p99`、`mean`、`min`、`max` も補助指標として保存する。
+
+Raspberry Pi 上のリアルタイム性は `end_to_end_ms` で評価する。フレーム予算と
+締切超過率は次式で定義する。
+
+```text
+frame_budget_ms = 1000 / source_fps
+deadline_miss_rate = count(end_to_end_ms > frame_budget_ms) / measured_frames
+```
+
+summary には `end_to_end_effective_fps`、`end_to_end_realtime_ok`、
+`deadline_miss_count`、`deadline_miss_rate` を保存する。既存の `frame_ms` 系キーと
+`effective_fps` / `realtime_ok` は互換性のため `core_ms` 系の deprecated alias として
+残し、新規のリアルタイム判定には使用しない。
+
+#### warm-up
+
+- 両方式とも `WARMUP_FRAMES`（既定 30）を使用し、config に `warmup_frames` を保存する。
+- warm-up 中も検出、追跡、カウント、出力は通常どおり実行し、速度 summary からだけ除外する。
+- summary に `measured_frames` を保存する。
+- `total_frames <= warmup_frames` の run は比較可能な統計を作れないためエラーとし、0 ms の有効値として保存しない。
+
+#### 非同期デバイスの同期
+
+CUDA/MPS などでは処理投入と完了が非同期になり得るため、
+`inference_tracking_ms` の開始直前と終了時刻取得直前にデバイス同期を行う。
+CPU は no-op とする。これにより GPU 処理が完了する前にタイマーだけ止まることを防ぐ。
+
+#### 同一条件 run の判定
+
+速度比較に使う run は、次の共通条件が一致しなければならない。
+
+| config | 意味と必要性 |
+|---|---|
+| `input_sha256` | 同名でも内容が異なる動画を区別する |
+| `model_sha256` | 同名でも重みが異なるモデルを区別する |
+| `frame_width` / `frame_height` / `source_fps` | 入力画素数とフレーム予算を固定する |
+| `vehicle_classes` | 検出・NMS・追跡対象を固定する |
+| `yolo_conf` / `yolo_iou` / `yolo_imgsz` | 候補数、後処理量、推論入力サイズを固定する |
+| `tracker_config` | ByteTrack/BoT-SORT とその閾値を固定する |
+| `device_name` / `device_accelerator` / `yolo_device` | 実機名と CPU/CUDA/MPS 等の実行先を固定する |
+| `warmup_frames` | 統計から除外する範囲を固定する |
+| `save_video` / `show_display` | `output_ms` と `end_to_end_ms` の出力条件を固定する |
+| `timing_schema_version` | 計測区間の定義が同じ run だけを比較する |
+
+上記を正規化して SHA-256 化した `comparison_key` を config に保存する。
+W&B では `comparison_key` が一致する ROI / 2 ライン run のみを直接比較する。
+
+---
+
+## 3. 実装するモジュール
+
+### 3.1 共通ユーティリティ `raspi/common/wandb_logger.py`（新規作成）
+
+両ロジックから共有する薄いラッパを作る。W&B 無効時は no-op になること。
+
+要件:
+
+- `class ExperimentLogger` を定義する。
+- `__init__(self, project: str, config: dict, group: str, job_type: str, tags: list, enabled: bool)`
+  - `enabled=False` のとき `wandb.init` を呼ばず、以降の全メソッドを no-op にする。
+  - `wandb.init(project=..., config=config, group=group, job_type=job_type, tags=tags)` を実行。
+  - `WANDB_MODE` は wandb 側の標準挙動に任せる（本ラッパで上書きしない）。
+- `log_frame(self, step: int, metrics: dict)` … `wandb.log(metrics, step=step)`。
+- `set_summary(self, key: str, value)` / `set_summaries(self, d: dict)`。
+- `finish(self, exit_code: int = 0)` … `wandb.finish(exit_code=exit_code)`。
+- **`run_id` プロパティ** … `wandb.run.id`（無効時は `None`）。
+- `save_run_id(self, out_dir: Path)` … `out_dir / "wandb_run_id.txt"`にwandb_run_id、execution_id、condition_keyと互換aliasを保存する。
+- `init_accuracy_placeholders(self)` … §2.2 の精度系キーを `None` で summary に設定。init 直後に呼ぶ。
+- 旧`build_exp_key()`は過去runの読取互換用にのみ残す。新規configでは`exp_key = condition_key`とする。
+- `validate_log_interval_sec(value: float, source: str = "LOG_INTERVAL_SEC") -> float`（モジュール関数）… 0 以下・NaN・inf・不正文字列を拒否し `ValueError` を送出する。起動時に呼ぶこと。
+- `next_log_boundary(next_log_sec, t_rel_sec, log_interval_sec) -> float` / `should_log_frame(t_rel_sec, next_log_sec, count_changed) -> bool`（モジュール関数）… 定期サンプリング境界の判定・進行を while ループなしで行う。
+
+実装メモ:
+- `wandb` の import は遅延 import（`enabled` のときだけ）にして、未インストール環境で読み込み自体が落ちないようにする。
+- **呼び出し側は `finish()` を必ず `try/finally` で保証する**（§4 各所に明記）。カメラ切断・例外・Ctrl+C でも run が "running" のまま放置されないこと。異常終了時は `exit_code=1` で finish する。
+- 長時間のカメラ運用向けに `update_running_summary(self, d: dict)`（処理途中の count_in/out 等を summary へ随時反映するだけの薄いメソッド）を用意する。クラッシュしても直近の集計が残る。
+
+### 3.1a run識別ユーティリティ `raspi/common/run_identity.py`
+
+- `build_condition_key(condition)`は型付きcanonical JSONをSHA-256化する。floatの表示丸めや辞書挿入順に依存しない。
+- `build_run_identity()`は同一条件でも毎回異なる`execution_id`を生成する。
+- `collect_reproducibility_info()`はGit SHA、dirty状態、Python・主要ライブラリ版を返す。
+- `write_run_manifest()`はW&Bの有効・無効に関係なく、ID、config、出力パスをJSONへ保存する。
+
+### 3.2 統計ユーティリティ `raspi/common/frame_stats.py`（新規作成）
+
+- `compute_frame_stats(frame_ms_list: list[float], source_fps: float) -> dict`
+  - min / max / mean / p50 / p95 / p99 / total_ms / effective_fps / realtime_ok を返す。
+  - 空リスト時は全て 0 または `False` を返し例外を出さない。
+- `numpy` を使ってよい（既存依存にあり）。
+
+### 3.3 共通モジュールの import 経路（重要・未指定だと迷う）
+
+両プロジェクトは既に `sys.path.insert(0, <自ルート>)` スタイルなので、これに合わせる。パッケージ化（pip install -e）は今回しない。
+
+- `raspi/common/__init__.py` を作成する。
+- 各スクリプトの既存 `sys.path.insert` の直後に、`raspi/` ディレクトリも追加する:
+  ```python
+  # 例: raspi/roi-counter/scripts/02_run_analysis.py の場合
+  sys.path.insert(0, str(Path(__file__).parents[1]))   # 既存: roi-counter/
+  sys.path.insert(0, str(Path(__file__).parents[2]))   # 追加: raspi/
+  from common.wandb_logger import ExperimentLogger
+  from common.run_identity import build_condition_key, build_run_identity
+  from common.frame_stats import compute_frame_stats
+  ```
+- `line_detection/main.py` は `os.path.dirname` スタイルなのでそれに合わせて親ディレクトリを追加する。
+
+---
+
+## 4. 既存スクリプトへの差し込み
+
+### 4.1 `roi-counter/scripts/02_run_analysis.py`
+
+- 冒頭パラメータ群の近くに W&B 設定（`USE_WANDB`, `WANDB_PROJECT`, `EXP_DEVICE_NAME`, `LOG_INTERVAL_SEC` 等）を追加。環境変数で上書き可能にする。
+- `main()` 内:
+  1. 既存の `out_dir` 作成後、`config` dict を構築（§2.1 に従う。`logic_name="roi_counter"`, `s_low/s_high` を含める）。
+  2. `build_run_identity()`で`condition_key`、`execution_id`、`display_name`を生成しconfigへ入れる。
+  3. `ExperimentLogger` を初期化し、`init_accuracy_placeholders()` を呼ぶ。**以降の処理全体を `try/finally` で包み、finally で `finish()`**（例外時は `exit_code=1`）。
+  4. フレームループ内、既存の `frame_records.append(...)` の直後に、間引き条件（§2.3）を満たすフレームで `logger.log_frame(step=frame_idx, metrics={...})` を追加（`frame_ms`, `net_flow`, `cumulative_in`, `cumulative_out`, `num_tracks`, `retained_states`）。カウント変化時は間引き中でも log。
+  5. ループ後、`compute_frame_stats()` の結果と count 系を `set_summaries`。GT があれば `count_error` も。
+  6. `logger.save_run_id(out_dir)`と`run_manifest.json`を保存する。
+- **既存の CSV / JSON / mp4 出力は一切削らない**。
+
+### 4.2 `roi-counter/scripts/04_multi_video_mae.py`（スイープ）
+
+- **(s_low, s_high, video) の組ごとに 1 run** を作る。時系列 log は行わず、config + summary のみ（run 数 × フレーム数の log は過剰なため）。
+- `run_once()` の戻り値に `frame_times`（生リスト）を含めるよう拡張（p95 等の算出に必要）。
+- **【既存バグ修正・原則 6 の例外】トラッカー状態のリセット**:
+  - 現状は同一 `YOLO` インスタンスを `persist=True` のまま全組で使い回しており、**前の run のトラック ID 状態が次の run に持ち越される**。これでは run が独立でなく、W&B 上の比較が成立しない。
+  - `run_once()` の冒頭でトラッカー状態をリセットすること。実装は次の優先順で試す:
+    1. `model.predictor.trackers[0].reset()`（ultralytics のバージョンにより利用可否が変わるため、`hasattr` チェックの上で呼ぶ）
+    2. 上記が使えない場合は `YOLO(MODEL_PATH)` を run_once ごとに再生成する（ロード時間は増えるが正しさを優先）。
+  - どちらを行ったかに関わらず `config["tracker_reset"] = True` を記録する。リセットできなかった場合は `False` を記録し WARN を出す。
+  - 同じ問題は `03_sweep_params.py` にもあるが、本実装のスコープは 04 のみとし、03 は TODO コメントを残す。
+- `main()` のループ内、`run_once` の後で run を 1 つ作り、config・summary（速度統計 + count + count_error + gt）・精度プレースホルダを記録して finish（try/finally）。
+- `detail_rows`（既存CSV）に`wandb_run_id`、`execution_id`、`condition_key`列を追加してCSVとW&Bを相互参照可能にする。
+- 既存の `results.csv` / `mae_summary.csv` 出力は維持する。
+
+### 4.3 `line_detection/main.py`
+
+- `process_video()` に W&B 連携を追加。
+- `config`は`logic_name="line_detection"`、Line1・Line2の全座標、駐車場基準点、
+  `margin`、`max_frame_gap`、`cleanup_threshold`、YOLO実引数、入力・モデルhash、
+  Git・主要ライブラリ版を含める。
+- **処理時間の生リストは `process_video()` 内のローカルリストで保持する**（`EventLogger` クラスは変更しない。processing_time_ms を計算している箇所で同じ値を append するだけ）。
+- フレームループで間引き付き `log_frame`。`net_flow` は `tracker.get_net_flow()` 相当の値（`count_in - count_out`）、`num_tracks` はそのフレームで新たにIDが割り当てられた検出数、`retained_states` は `len(tracker.states)`（保持中の状態数、num_tracksとは別概念）。カウント確定時（`mark_as_counted` が呼ばれたフレーム）は間引き中でも log。
+- カメラ入力（`--camera`）は長時間運用になるため、`update_running_summary()` を N フレームごと（例: 300 フレーム）に呼び、クラッシュ時にも直近カウントが summary に残るようにする。
+- ループ後、`tracker.get_summary()` とローカル処理時間リストから summary を構築。全体を try/finally で包み finish を保証（既存の KeyboardInterrupt ハンドリングと整合させる）。
+- 既存の`EventLogger`（JSON/CSV出力）は維持。`events_*.json`に`wandb_run_id`、
+  `execution_id`、`condition_key`と互換aliasを含め、run manifestも保存する。
+- `argparse` に `--wandb` / `--device-name` を追加してよい。
+
+---
+
+## 5. 後追い精度評価スクリプト `raspi/eval/update_accuracy_from_sam3.py`（新規作成・雛形のみ）
+
+SAM3 の GT が揃った後に実行する独立スクリプト。**run の再開ではなく W&B API 経由で既存 run の summary を更新する**方針（実行と評価を分離するため）。
+
+要件:
+
+- 入力: SAM3由来の評価結果テーブルと、対応する`wandb_run_id`、`execution_id`、`condition_key`のいずれか（旧データのみ`exp_key`も可）。
+- 処理:
+  1. `wandb.Api()` を使う。
+  2. `wandb_run_id`、`execution_id`、`condition_key`、旧`exp_key`の優先順でrunを特定する。config検索はfilterを使い全走査しない。
+  3. `run.summary["accuracy"] = ...` 等を設定し、`run.summary.update()`。
+  4. `eval_unit` / `gt_source="sam3"` も記録。
+  5. 0件はWARNしてスキップする。複数件は候補ID・名前を表示し、誤更新を避けるため処理全体を停止する。
+- **GT の定義を明示するコメントを必ず書く**:
+  - 台数の最終 GT は人手の真値（既存 `*_gt.json`）を ground truth とする。
+  - SAM3 は per-vehicle 軌跡 / イベント列の生成補助に使い、SAM3 出力をそのまま GT としない。
+  - 評価単位（`event` / `detection`）はスクリプト冒頭の定数で選択。デフォルトは `event`。
+- マッチングロジック本体は TODO コメントで枠だけ作る（GT データが無いため）。インターフェース（入力フォーマット、出力 summary キー）だけ確定させる。
+- **ダミー入力での動作確認用に、`--dry-run` フラグ**（対象 run と書き込み予定値を表示するだけで書き込まない）を実装する。
+
+---
+
+## 6. W&B プロジェクト構成の指針（コメントとして残す）
+
+- `project`: 単一プロジェクト（例 `"tracking-parking"`）。
+- `group`: `logic_name`。 `job_type`: `"speed_eval"` / `"accuracy_eval"`。 `tags`: `device_name`, `input_type`。
+- 1 run = (logic × dataset × params × device) の 1 実行。
+- **オフライン運用**: Raspberry Pi 実機ではネットワークが無い前提で `WANDB_MODE=offline` で実行し、後日開発機で `wandb sync <run_dir>` する。手順を README に記載。
+
+---
+
+## 7. 受け入れ条件（Definition of Done）
+
+1. `USE_WANDB=false` で全スクリプトが従来どおり動作し、出力ファイルが変わらない（`wandb` 未インストールでも動く）。
+2. `USE_WANDB=true` で各 run に config / summary / time-series が記録される。
+3. 全runのconfigに`condition_key`、`execution_id`、`display_name`が入り、manifestにW&B IDと出力パスが保存される。同条件の再実行はcondition_keyが同じでexecution_idが異なる。
+4. summary に精度系キーが `None` で存在する。
+5. `update_accuracy_from_sam3.py --dry-run` が、ダミー評価テーブルを入力に対象 run を正しく特定・表示できる。dry-run なしで summary 更新が動作する。
+6. `frame_ms_p95` / `effective_fps` / `realtime_ok` が正しく算出される（`compute_frame_stats` の単体テストで担保）。
+7. 例外・KeyboardInterrupt で中断しても run が finish される（手動確認でよい）。
+8. `04_multi_video_mae.py` で run 間のトラッカー状態リセットが行われ、`tracker_reset` が config に記録される。
+9. `LOG_INTERVAL_SEC` の間引きが機能し、カウント変化フレームは間引き中でも log される。
+10. 既存テストが通り、canonical key、ROI・Line1・Line2・駐車場基準点・モデル・動画差分、execution_id、manifest保存の単体テストがある。
+
+---
+
+## 8. 依存関係
+
+- `wandb` を `requirements.txt` / `pyproject.toml` に追加（最新安定版を指定）。
+- `wandb` 未インストールでも `USE_WANDB=false` 経路は動くこと（遅延 import）。
+
+---
+
+## 9. 実装順序の推奨
+
+1. `common/frame_stats.py`、`common/wandb_logger.py`、`common/run_identity.py`（no-op経路・識別子・manifestテスト含む）。
+2. `roi-counter/scripts/02_run_analysis.py` への差し込み（最小構成の検証）。
+3. `roi-counter/scripts/04_multi_video_mae.py`（スイープ → 複数 run、トラッカーリセット含む）。
+4. `line_detection/main.py`。
+5. `eval/update_accuracy_from_sam3.py`（雛形 + dry-run）。
+6. requirements 更新・README への offline 手順追記。
+
+---
+
+## 10. オプション（余力があれば。必須ではない）
+
+- **W&B Artifact**: run 終了時に `vehicles.csv`（roi-counter）/ `events_*.json`（line_detection）を artifact としてアップロードする。per-vehicle の誤検出分析を run 間で見比べられるようになる。offline モードでも artifact はローカル保存され sync 時に上がる。
+- **W&B Table**: `vehicles.csv` の内容を `wandb.Table` として log し、UI 上で track_id ごとの counted_as / state をフィルタ可能にする。
+- どちらも `enabled` フラグとは別のオプトイン設定（`WANDB_UPLOAD_ARTIFACTS=true`）で制御する。
