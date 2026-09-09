@@ -8,8 +8,8 @@ load_dotenv()
 HOME_DIR = os.environ["HOME_DIR"]
 
 # パス設定
-PATH = HOME_DIR + "/yolo_fine_tuning/runs/detect/train14/weights/best.pt"
-TEST_FILE = HOME_DIR + "/yolo_fine_tuning/test/test_img_1.jpg"
+PATH = HOME_DIR + "/training/runs/detect/train14/weights/best.pt"
+TEST_FILE = HOME_DIR + "/training/test/test_img_1.jpg"
 
 # 設定
 confidence = 0.8

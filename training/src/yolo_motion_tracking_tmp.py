@@ -8,10 +8,10 @@ import Levenshtein
 # パス設定
 load_dotenv()
 HOME_DIR = os.environ["HOME_DIR"]
-PATH = os.path.join(HOME_DIR, "yolo_fine_tuning/runs/detect/train14/weights/best.pt")
-# PATH = "/Users/ycn/Workspace/NUTMEG/tracking-parking/yolo_fine_tuning/test/yolov8l.pt"
-# video_path = os.path.join(HOME_DIR, "yolo_fine_tuning/src/testVideo/ocr_test2.mp4")
-video_path = os.path.join(HOME_DIR, "yolo_fine_tuning/src/testVideo/tra-pa_motion_test_multi.mp4")
+PATH = os.path.join(HOME_DIR, "training/runs/detect/train14/weights/best.pt")
+# PATH = "/Users/ycn/Workspace/NUTMEG/tracking-parking/training/test/yolov8l.pt"
+# video_path = os.path.join(HOME_DIR, "training/src/testVideo/ocr_test2.mp4")
+video_path = os.path.join(HOME_DIR, "training/src/testVideo/tra-pa_motion_test_multi.mp4")
 camera_path = 0
 
 
@@ -24,7 +24,7 @@ cap = cv2.VideoCapture(camera_path)
 cap.set(cv2.CAP_PROP_FPS, 60)
 
 # 出力動画の設定
-# output_path = os.path.join(HOME_DIR, 'yolo_fine_tuning/src/testVideo/output.mp4')
+# output_path = os.path.join(HOME_DIR, 'training/src/testVideo/output.mp4')
 # fourcc = cv2.VideoWriter_fourcc(*'mp4v')
 # out = cv2.VideoWriter(output_path, fourcc, 30.0, (int(cap.get(3)), int(cap.get(4))))
 

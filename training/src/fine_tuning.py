@@ -13,7 +13,7 @@ HOME_DIR = os.environ["HOME_DIR"]
 
 model = YOLO("yolov8m.pt")
 model.train(
-    data=HOME_DIR + "/yolo_fine_tuning/yolo/dataset.yaml",
+    data=HOME_DIR + "/training/yolo/dataset.yaml",
     epochs=5,
     batch=8,
     workers=4,

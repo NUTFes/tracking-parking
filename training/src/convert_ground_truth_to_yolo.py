@@ -8,9 +8,9 @@ load_dotenv()
 HOME_DIR = os.environ["HOME_DIR"]
 
 # 定義
-inputPath = HOME_DIR + "/yolo_fine_tuning/resorces/dataset/output_ground_truth"
+inputPath = HOME_DIR + "/training/resorces/dataset/output_ground_truth"
 # outputPath = "./dataset/yolo"
-outputPath = HOME_DIR + "/yolo_fine_tuning/yolo"
+outputPath = HOME_DIR + "/training/yolo"
 manifest = "output.manifest"
 # 学習用と検証用の分割比率
 ratio = 0.8  # 8対2に分割する

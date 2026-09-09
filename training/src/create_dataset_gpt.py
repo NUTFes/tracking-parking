@@ -25,9 +25,9 @@ CLASS_NAME = ["number_plate"]
 
 COLORS = [(0, 0, 175), (175, 0, 0), (0, 175, 0), (175, 0, 175)]
 
-BACKGROUND_IMAGE_PATH = HOME_DIR + "/yolo_fine_tuning/resorces/dataset/background"
-TARGET_IMAGE_PATH = HOME_DIR + "/yolo_fine_tuning/resorces/dataset/output_png"
-OUTPUT_PATH = HOME_DIR + "/yolo_fine_tuning/resorces/dataset/output_ground_truth"
+BACKGROUND_IMAGE_PATH = HOME_DIR + "/training/resorces/dataset/background"
+TARGET_IMAGE_PATH = HOME_DIR + "/training/resorces/dataset/output_png"
+OUTPUT_PATH = HOME_DIR + "/training/resorces/dataset/output_ground_truth"
 
 S3Bucket = "s3://ground_truth_dataset"
 manifestFile = "output.manifest"

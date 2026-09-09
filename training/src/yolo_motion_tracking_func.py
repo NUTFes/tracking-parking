@@ -9,8 +9,8 @@ import threading
 def setup_paths():
     load_dotenv()
     HOME_DIR = os.environ["HOME_DIR"]
-    PATH = os.path.join(HOME_DIR, "yolo_fine_tuning/runs/detect/train14/weights/best.pt")
-    video_path = os.path.join(HOME_DIR, "yolo_fine_tuning/src/testVideo/tra-pa_motion_test_multi.mp4")
+    PATH = os.path.join(HOME_DIR, "training/runs/detect/train14/weights/best.pt")
+    video_path = os.path.join(HOME_DIR, "training/src/testVideo/tra-pa_motion_test_multi.mp4")
     camera_path = 0
     return PATH, camera_path
 

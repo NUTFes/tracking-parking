@@ -9,7 +9,7 @@ load_dotenv()
 
 # パスの設定
 HOME_DIR = os.environ["HOME_DIR"]
-PATH = HOME_DIR + "/yolo_fine_tuning/runs/detect/l_640_FHD/weights/best.pt"
+PATH = HOME_DIR + "/training/runs/detect/l_640_FHD/weights/best.pt"
 
 # YOLOモデルのロード
 model = YOLO(PATH, verbose=False)

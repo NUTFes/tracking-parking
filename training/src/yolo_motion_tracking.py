@@ -7,8 +7,8 @@ import easyocr
 # パス設定
 load_dotenv()
 HOME_DIR = os.environ["HOME_DIR"]
-PATH = os.path.join(HOME_DIR, "yolo_fine_tuning/runs/detect/train14/weights/best.pt")
-video_path = os.path.join(HOME_DIR, "yolo_fine_tuning/src/testVideo/ocr_test_video.mp4")
+PATH = os.path.join(HOME_DIR, "training/runs/detect/train14/weights/best.pt")
+video_path = os.path.join(HOME_DIR, "training/src/testVideo/ocr_test_video.mp4")
 camera_path = 0
 
 # Yoloモデルのロードとビデオキャプチャのセットアップ
@@ -17,7 +17,7 @@ cap = cv2.VideoCapture(video_path)
 # cap = cv2.VideoCapture(0)
 
 # 出力動画の設定
-output_path = os.path.join(HOME_DIR, 'yolo_fine_tuning/src/testVideo/output.mp4')
+output_path = os.path.join(HOME_DIR, 'training/src/testVideo/output.mp4')
 fourcc = cv2.VideoWriter_fourcc(*'mp4v')
 out = cv2.VideoWriter(output_path, fourcc, 30.0, (int(cap.get(3)), int(cap.get(4))))
 

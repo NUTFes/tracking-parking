@@ -1,4 +1,4 @@
-train: /home/ichinose/workspace/tracking-parking/yolo_fine_tuning/yolo/train/       # 訓練データセットのディレクトリ
-val: /home/ichinose/workspace/tracking-parking/yolo_fine_tuning/yolo/valid/         # 検証データセットのディレクトリ
+train: /home/ichinose/workspace/tracking-parking/training/yolo/train/       # 訓練データセットのディレクトリ
+val: /home/ichinose/workspace/tracking-parking/training/yolo/valid/         # 検証データセットのディレクトリ
 nc: 1                     # クラス数（例えば、ナンバープレートが1種類のみの場合）
 names: ['number_plate']   # クラス名のリスト
