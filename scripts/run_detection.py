@@ -12,6 +12,7 @@ import os
 import platform
 import sys
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from ultralytics import YOLO
 
@@ -54,6 +55,8 @@ from tracking_parking.common.ground_truth import (
     build_ground_truth_summary,
     load_ground_truth,
 )
+from tracking_parking.api.runtime import ApiRuntime
+from tracking_parking.api.settings import ApiSettings
 
 
 WEBCAM_FPS = 30.0
@@ -148,6 +151,7 @@ def process_video(
     device_name: str = platform.node(),
     runtime: RuntimeSettings | None = None,
     ground_truth: GroundTruth | None = None,
+    no_api: bool = False,
 ):
     """
     動画を処理
@@ -313,6 +317,16 @@ def process_video(
     wandb_logger.init_accuracy_placeholders()
     wandb_logger.define_metric("net_flow", step_metric="t_rel_sec")
 
+    # API送信ランタイムを組み立てる。送信ガード（カメラ入力 かつ API_ENABLED=true）は
+    # ApiRuntime.create()の内部で判定する。動画ファイル入力では常に無効になる。
+    api = ApiRuntime.create(
+        ApiSettings.from_env(home_dir=config.home_dir),
+        input_type=input_type,
+        execution_id=run_config["execution_id"],
+        force_disabled=no_api,
+    )
+    api.start()
+
     # 2. フレーム毎処理
     frame_id = 0
     timing_records: list[FrameTiming] = []
@@ -327,6 +341,9 @@ def process_video(
             with elapsed_timer() as end_to_end_timer:
                 with elapsed_timer() as read_timer:
                     ret, frame = cap.read()
+                # API送信の有無に関わらず無条件で取得する。api.enabledで分岐すると
+                # 有効run/無効runでend_to_end_msの測り方が変わり、run間の比較可能性が崩れる。
+                frame_read_at = datetime.now().astimezone()
                 if not ret:
                     break
 
@@ -403,6 +420,7 @@ def process_video(
                 with elapsed_timer() as output_timer:
                     for event in pending_events:
                         event_id = event_logger.record_event(**event)
+                        event["event_id"] = event_id
                         state = tracker.get_state(event["track_id"])
                         if state is not None:
                             state.pending_event_id = event_id
@@ -484,6 +502,13 @@ def process_video(
                 print(
                     f"[Frame {frame_id}] ID:{event['track_id']} "
                     f"{event['event_type']} (信頼度: {event['confidence']})"
+                )
+                # confidenceの確定を待たずに送る（high/normalを区別せず全件送信する方針）。
+                api.enqueue_event(
+                    event_id=event["event_id"],
+                    event_type=event["event_type"],
+                    detected_at=frame_read_at,
+                    track_id=event["track_id"],
                 )
 
             frame_id += 1
@@ -576,6 +601,7 @@ def process_video(
             out.release()
         if config.show_display:
             cv2.destroyAllWindows()
+        api.shutdown()
         wandb_logger.finish(exit_code=exit_code)
 
 
@@ -612,6 +638,11 @@ def main():
         "--wandb",
         action="store_true",
         help="W&Bへ速度・台数メトリクスを記録"
+    )
+    parser.add_argument(
+        "--no-api",
+        action="store_true",
+        help=".envのAPI_ENABLEDに関わらず、API送信だけを無効化する（実機デバッグ用）"
     )
     parser.add_argument(
         "--device-name",
@@ -683,6 +714,7 @@ def main():
             device_name=args.device_name or os.getenv("EXP_DEVICE_NAME", platform.node()),
             runtime=runtime,
             ground_truth=ground_truth,
+            no_api=args.no_api,
         )
         return 0
     except KeyboardInterrupt:
