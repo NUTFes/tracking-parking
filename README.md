@@ -44,6 +44,22 @@ uv run python scripts/run_multi_video.py
 
 結果は `data/outputs/` に出る（アノテーション動画、イベントログのJSON/CSV、run manifest）。
 
+## API送信
+
+カメラ入力かつ `.env` の `API_ENABLED=true` のとき、検出した入出庫を
+[tracking-parking-api](https://github.com/NUTFes/tracking-parking-api) へ
+リアルタイムに送信する。動画ファイル入力では、設定に関わらず常に送信しない
+（検証の再実行が本番の駐車台数を壊さないための安全策）。
+
+```bash
+uv run python scripts/run_detection.py --camera 0
+uv run python scripts/run_detection.py --camera 0 --no-api  # .envを書き換えずに送信だけ止める
+```
+
+設定キーの一覧は `.env.template` を参照。詳細（失敗時の再送方針、集計開始/停止コマンドの扱いなど）は
+[docs/decisions/0002-api-event-delivery.md](docs/decisions/0002-api-event-delivery.md) と
+[docs/two-line-system.md](docs/two-line-system.md#api送信設定) を参照。
+
 ## テスト
 
 ```bash
