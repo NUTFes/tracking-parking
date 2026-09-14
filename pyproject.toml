@@ -1,7 +1,7 @@
 [project]
 name = "tracking-parking"
 version = "0.1.0"
-description = "Add your description here"
+description = "2ライン方式による駐車場の入出庫検知"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -26,3 +26,13 @@ dependencies = [
 dev = [
     "pytest>=9.1.1",
 ]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tracking_parking"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
