@@ -103,9 +103,8 @@ ROI方式には、YOLO推論を動画1本につき1回だけ実行し、検出�
 
 ## 残っている既知の課題
 
-- **Line2通過の扱いが未定。** 6動画の128イベントのうち99件が `high`、29件が `normal` だった。
-  Line2を通過しない `normal` も台数に含まれるため、この信頼度をAPI送信や運用判断で
-  どう扱うかを決める必要がある。
-- **入出庫イベントをAPIへ送る処理が両方式とも未実装。** 方式共通の統合作業として残る。
+- ~~Line2通過の扱いが未定~~ → [0002-api-event-delivery.md](0002-api-event-delivery.md) で解決。
+  `high`/`normal` を区別せず全件送信する。
+- ~~入出庫イベントをAPIへ送る処理が両方式とも未実装~~ → [0002-api-event-delivery.md](0002-api-event-delivery.md) で実装。
 - **Jetson Orin NXでライン座標設定GUIが起動しない**（Issue #103）。
   OpenCVのGUIバックエンドの問題で、`SHOW_DISPLAY=false` のカウント処理自体は動作する。
