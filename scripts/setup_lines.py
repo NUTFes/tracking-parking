@@ -278,9 +278,8 @@ class LineSetupGUI:
     def save_to_env(self):
         """ライン座標だけを.envへ書き戻す。
 
-        他のキー、コメント、並び順は保持する（roi-counterのroi_config.pyと
-        同じ契約）。以前はファイル全体をテンプレートで上書きしており、
-        比較条件のために手で入れた値が消えていた。
+        他のキー、コメント、並び順は保持する。以前はファイル全体をテンプレートで
+        上書きしており、比較条件のために手で入れた値が消えていた。
         """
         values = build_line_env_values(self.points)
 

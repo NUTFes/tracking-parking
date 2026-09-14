@@ -14,6 +14,7 @@ __pycache__/
 /models/**
 !/data/**/
 !/data/**/.gitkeep
+!/data/inputs/videos.example.json
 !/models/.gitkeep
 *.pt
 

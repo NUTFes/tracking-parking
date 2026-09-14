@@ -3,19 +3,30 @@
 2ライン検知ロジックが期待どおり動くことを、実動画1本に対して端から端まで確認する手順。
 新しい環境で動かすとき、判定ロジックを変更したとき、ROI方式と比較するときに使う。
 
-ROI方式の検証手順は `raspi/roi-counter/VERIFICATION.md`（`feat/mike/89-bbox-analysis-within-roi` ブランチ）にある。
+ROI方式は比較検討の末に不採用となり、本ブランチにコードは無い
+（経緯は [decisions/0001-two-line-method.md](decisions/0001-two-line-method.md)）。
+当時の検証手順は同じリポジトリの `feat/mike/89-bbox-analysis-within-roi` ブランチ、
+`raspi/roi-counter/VERIFICATION.md` に残っている。
 
 ## 0. 前提条件
 
 - リポジトリルートで `uv sync` 済みであること
-- 実動画がローカルに存在すること。`data/` は `.gitignore` 対象なので、
-  リポジトリを新しく取得した環境では別途配置が必要
-  - `data/inputs/IMG_2787.MOV`
-  - GT（正解台数）は ROI方式と共有する: `data/inputs/configs/IMG_2787_gt.json`
+- 実動画とGTがローカルに存在すること。`data/` は `.gitignore` 対象のため
+  リポジトリには含まれず、チームで共有している資産を別途配置する必要がある
+  - `data/inputs/IMG_2787.MOV` — 本手順で使う検証動画
+  - `data/inputs/configs/IMG_2787_gt.json` — 対応するGT（正解台数）。
+    書式は `{"in": 22, "out": 0}`（8章参照）
 - `.env` が存在すること（`.gitignore` 対象。無ければ 2章で作成する）
 - 1回の実行に数分〜十数分かかる（YOLO推論を含むため）
 
-以降のコマンドは断りがない限り `` をカレントディレクトリとして書く。
+> **GTファイルの出所（2026-09-10 追記）**
+> `data/inputs/configs/*_gt.json` は元々ROI方式側のディレクトリに置かれていたが、
+> ディレクトリ整理の際に誤って削除した。台数の値は過去runのmanifestに記録されていた
+> `gt_in` / `gt_out` から復元してあるが、**ファイルのSHA-256は元と一致しない**。
+> `condition_key` にGTのハッシュが含まれるため、2026-09-10 以降のrunは
+> それ以前のrunと同一条件とはみなされない。
+
+以降のコマンドは断りがない限り、リポジトリルートをカレントディレクトリとして書く。
 
 ### W&B（実験記録）について
 
@@ -88,7 +99,7 @@ wandbはローカルへバッファして再送する設計だが、`finish()` �
 
 ### 本番運用ではW&Bを有効にしない（2026-08-26 決定）
 
-`main.py` は検証と本番運用の両方で使う。
+`scripts/run_detection.py` は検証と本番運用の両方で使う。
 W&Bは `--wandb` または `USE_WANDB=true` で明示的に有効化したときだけ動くので、
 本番運用ではどちらも付けない。
 ネットワーク断が入出庫カウントの停止に直結する状態を、24/7で動く監視系に持ち込まないため。
@@ -124,9 +135,9 @@ uv run python scripts/setup_lines.py --video data/inputs/IMG_2787.MOV
 
 `r` キーでやり直し、`q` キーまたはウィンドウを閉じると保存される。
 
-> **注意**: このツールは `.env` を**丸ごと上書きする**。`MODEL_PATH` や `MARGIN_PX` など
-> ライン座標以外の値もテンプレートの既定値で書き戻されるため、実行後に `.env` を開いて
-> 意図した値になっているか確認すること。
+> このツールが書き換えるのはライン座標のキー（`LINE1_*` / `LINE2_*` / `PARKING_REF_*`）だけで、
+> `MODEL_PATH` や `MARGIN_PX` など他の値・コメント・並び順は保持される。
+> `.env` が存在しない場合のみ `.env.template` を土台にして新規作成する。
 
 `.env` を手で作る場合は `.env.template` をコピーして `MODEL_PATH` を実在するモデルへ
 書き換える（テンプレートはfine-tuned modelを指しているが、手元に無ければ `yolov8s.pt` でよい）。
@@ -162,8 +173,7 @@ USE_WANDB=true WANDB_MODE=offline WANDB_DIR=data/outputs \
 
 `count_error` と confidence の内訳はこの run のW&B summary に入る。
 W&Bを付けずに実行すると、合格判定の根拠がローカル成果物にしか残らず、
-ROI方式（`04_multi_video_mae.py` が既定でW&Bへ記録する）と粒度が揃わない。
-完走したら6章と同じ手順で `wandb sync` する。
+run間で追跡できなくなる。完走したら6章と同じ手順で `wandb sync` する。
 
 **確認する項目**: 実行中に `GT比較: count_error=0 (in=0, out=0)` が出たあと、
 末尾に次のサマリーが表示される。
@@ -219,9 +229,9 @@ print('count_error:', data.get('accuracy', {}).get('count_error'))
 | `videos/annotated_<動画名>.mp4` | 可視化済み動画（`SAVE_VIDEO=true` 時） |
 | `manifests/<execution_id>.json` | run識別子・再現情報・出力パスの相互参照 |
 
-## 6. ROI方式との速度比較
+## 6. 速度比較のためのrun
 
-比較可能なrunにするには、両方式で動画・モデル・classes・confidence・IoU・image size・
+速度をrun間で比較するには、動画・モデル・classes・confidence・IoU・image size・
 tracker・device・warm-up・動画保存/表示設定を揃える必要がある。
 これらから生成される `comparison_key` が一致するrun同士だけを直接比較する。
 
@@ -318,4 +328,6 @@ uv run python -m tracking_parking.eval.build_accuracy_report \
 
 - `docs/two-line-system.md` — システム構成、設定パラメータ、アルゴリズムの解説
 - `docs/wandb_integration_spec_v2.md` — 実験記録の仕様
-- `raspi/roi-counter/VERIFICATION.md` — ROI方式の検証手順（`feat/mike/89-bbox-analysis-within-roi` ブランチ）
+- [decisions/0001-two-line-method.md](decisions/0001-two-line-method.md) — 2ライン方式を採用した経緯と比較結果
+- `raspi/roi-counter/VERIFICATION.md` — 不採用となったROI方式の検証手順。
+  同リポジトリの `feat/mike/89-bbox-analysis-within-roi` ブランチにある

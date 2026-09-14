@@ -37,6 +37,8 @@ uv run python scripts/run_detection.py --input data/inputs/test.mp4
 uv run python scripts/visualize_lines.py data/inputs/test.mp4
 
 # 4. 複数動画をまとめて処理し、サマリーへ集約する
+#    対象動画は data/inputs/videos.json に書く（雛形は videos.example.json）
+cp data/inputs/videos.example.json data/inputs/videos.json
 uv run python scripts/run_multi_video.py
 ```
 

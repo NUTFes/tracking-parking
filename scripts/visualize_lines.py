@@ -244,15 +244,16 @@ if __name__ == "__main__":
         description="ライン位置と車両検出位置を可視化",
         epilog=(
             "例:\n"
-            "  python visualize_lines_and_vehicles.py data/inputs/IMG_2787.MOV\n"
-            "  python visualize_lines_and_vehicles.py data/inputs/IMG_2787.MOV debug_vis.mp4\n"
-            "  python visualize_lines_and_vehicles.py data/inputs/IMG_2787.MOV debug_vis.mp4 300 600\n"
-            "  python visualize_lines_and_vehicles.py data/inputs/1787011229.231516.mp4 "
-            "vis.mp4 0 300 --env newcam.env"
+            "  python scripts/visualize_lines.py data/inputs/sample.mp4\n"
+            "  python scripts/visualize_lines.py data/inputs/sample.mp4 debug_vis.mp4\n"
+            "  python scripts/visualize_lines.py data/inputs/sample.mp4 debug_vis.mp4 300 600\n"
+            "  # 画角ごとに.envを分けている場合\n"
+            "  python scripts/visualize_lines.py data/inputs/sample.mp4 "
+            "debug_vis.mp4 0 300 --env camera_a.env"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    # 位置引数の並びはVERIFICATION.mdの記載と互換を保つ。
+    # 位置引数の並びは docs/verification.md の記載と互換を保つ。
     parser.add_argument("video", help="動画ファイルのパス")
     parser.add_argument("output", nargs="?", default=None, help="出力動画パス(省略時は保存しない)")
     parser.add_argument("start_frame", nargs="?", type=int, default=0, help="開始フレーム")

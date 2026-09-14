@@ -40,7 +40,9 @@ tracking-parking/
 ├── models/                        # YOLOモデル重み(.pt、Git管理外)
 └── data/                          # データ(Git管理外)
     ├── inputs/                   # 入力動画(.mp4)
-    │   └── configs/              # 正解台数GT(<動画名>_gt.json)
+    │   ├── configs/              # 正解台数GT(<動画名>_gt.json)
+    │   ├── videos.example.json   # 複数動画処理の対象リスト雛形(Git管理下)
+    │   └── videos.json           # 同・実体
     └── outputs/                  # 出力結果
         ├── videos/               # アノテーション済み動画
         └── logs/                 # イベントログ(JSON/CSV)
@@ -166,8 +168,7 @@ wandb sync <run_dir>
 ### 台数精度の比較（GT）
 
 正解台数(GT)のJSONを`--gt`で指定すると、検出結果との差を`count_error`として
-記録する。ROI方式と同じGTファイルを共有し、`roi`キー等ROI方式固有の項目は
-無視する。
+記録する。GTファイルは`in`/`out`以外のキーを持っていても無視される。
 
 ```bash
 python scripts/run_detection.py --input data/inputs/test.mp4 \
@@ -195,15 +196,13 @@ GTのJSON形式:
 
 - `gt_in` / `gt_out`: GTの値(未確認は`None`)
 - `count_error_in` / `count_error_out`: 方向ごとの絶対誤差(未評価の方向は`None`)
-- `count_error`: 評価した方向の誤差合計。**評価方向数によってスケールが変わるため、
-  ROI方式の`04_multi_video_mae.py`と直接比較してよいのはIN/OUT両方が評価済みのときだけ**。
+- `count_error`: 評価した方向の誤差合計。**評価方向数によってスケールが変わる**ため、
+  run間で比較してよいのは評価方向が揃っているときだけ。
   片方のみの評価では方向別キー(`count_error_in`等)を使うこと
 
 GT情報(`ground_truth_sha256`・`gt_in`・`gt_out`)は`condition_key`に含まれるため、
 GTの有無・内容が変わると同一条件とはみなされなくなる。
 
-> **注意**: ROI方式の`04_multi_video_mae.py`はGTの`out`が`null`だとエラーになる。
-> `null`を含むGTをROI方式の`GT_DIR`に置かないこと。
 
 ## 出力ファイル
 

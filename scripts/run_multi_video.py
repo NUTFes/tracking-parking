@@ -12,6 +12,20 @@ run_detection.pyは1動画ずつしか扱わないため、同条件での複数
 
 閾値スイープは行わない。2ライン方式には探索対象のパラメータが無い。
 
+対象動画の一覧は、動画と.envの対応を書いたJSONで与える（既定は
+data/inputs/videos.json、`--videos` で変更可）。動画・.env・GTはいずれも
+.gitignore対象のローカル資産のため、リポジトリには含まれない。
+書式は data/inputs/videos.example.json を参照。
+
+    [
+      {"video": "data/inputs/sample_a.mp4", "env": "camera_a.env"},
+      {"video": "data/inputs/sample_b.mp4", "env": "camera_b.env"}
+    ]
+
+.envは画角ごとに用意する。.env.templateをコピーし、画角ごとに
+scripts/setup_lines.py でライン座標を設定すればよい。比較目的で走らせるときは、
+比較条件（model/conf/iou/classes/imgsz/tracker/device/warmup）を全.envで揃えること。
+
 出力:
     data/outputs/{EXP_NAME}/
     ├── {video_stem}/
@@ -19,6 +33,7 @@ run_detection.pyは1動画ずつしか扱わないため、同条件での複数
     │   └── manifests/<execution_id>.json  # 同上
     └── summary.csv                        # 本スクリプトが集約する
 """
+import argparse
 import csv
 import glob
 import json
@@ -30,17 +45,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 # ── パラメータ ──────────────────────────────────────────────────────────────
-# 画角が異なる動画は設定ファイルを分ける。newcam.envは新画角5本、img2787.envは
-# 旧画角。比較条件（model/conf/iou/classes/imgsz/tracker/device/warmup）は
-# 両者で同一にしてある。
-VIDEOS = [
-    ("data/inputs/1787008160.558032.mp4", "newcam.env"),
-    ("data/inputs/1787009706.719727.mp4", "newcam.env"),
-    ("data/inputs/1787011229.231516.mp4", "newcam.env"),
-    ("data/inputs/1787012751.179971.mp4", "newcam.env"),
-    ("data/inputs/1787014266.421887.mp4", "newcam.env"),
-    ("data/inputs/IMG_2787.MOV", "img2787.env"),
-]
+DEFAULT_VIDEO_LIST = "data/inputs/videos.json"
 
 GT_DIR = os.getenv("GT_DIR", "data/inputs/configs")
 EXP_NAME = os.getenv("EXP_NAME", "gate4_2line")
@@ -58,18 +63,44 @@ SUMMARY_COLUMNS = (
 )
 
 
+def load_videos(list_path: str) -> list[tuple[str, str]]:
+    """対象動画と.envの対応をJSONから読む。
+
+    動画・.env・GTはいずれも.gitignore対象のローカル資産なので、
+    リポジトリ内のハードコードではなく実行環境ごとのファイルで与える。
+    """
+    path = Path(list_path)
+    if not path.exists():
+        raise SystemExit(
+            f"[ERROR] 動画リストがありません: {path}\n"
+            f"  data/inputs/videos.example.json を {path} へコピーして編集してください。"
+        )
+    entries = json.loads(path.read_text(encoding="utf-8"))
+    videos = []
+    for i, entry in enumerate(entries):
+        try:
+            videos.append((entry["video"], entry["env"]))
+        except (TypeError, KeyError) as exc:
+            raise SystemExit(
+                f"[ERROR] {path} の {i} 番目の要素に video/env がありません: {entry!r}"
+            ) from exc
+    if not videos:
+        raise SystemExit(f"[ERROR] {path} に動画が1本もありません。")
+    return videos
+
+
 def gt_path_for(video: str) -> Path:
     """動画パスから対応するGTファイルのパスを導く。"""
     return Path(GT_DIR) / f"{Path(video).stem}_gt.json"
 
 
-def check_inputs() -> None:
+def check_inputs(videos: list[tuple[str, str]]) -> None:
     """動画・設定・GTの存在を先に確認する。
 
     1本目を数十分かけて処理した後に3本目のGTが無いと分かる、という失敗を避ける。
     """
     missing = []
-    for video, env in VIDEOS:
+    for video, env in videos:
         if not Path(video).exists():
             missing.append(f"動画がありません: {video}")
         if not Path(env).exists():
@@ -191,13 +222,24 @@ def print_comparison_check(rows: list) -> None:
 
 
 def main() -> int:
-    check_inputs()
+    parser = argparse.ArgumentParser(
+        description="複数動画を順に処理し、比較用サマリーへ集約する"
+    )
+    parser.add_argument(
+        "--videos",
+        default=DEFAULT_VIDEO_LIST,
+        help=f"動画と.envの対応を書いたJSON(既定: {DEFAULT_VIDEO_LIST})",
+    )
+    args = parser.parse_args()
+
+    videos = load_videos(args.videos)
+    check_inputs(videos)
     base = Path("data/outputs") / EXP_NAME
     base.mkdir(parents=True, exist_ok=True)
-    print(f"動画数: {len(VIDEOS)}  出力先: {base}")
+    print(f"動画数: {len(videos)}  出力先: {base}")
 
     rows, failed = [], []
-    for video, env in VIDEOS:
+    for video, env in videos:
         out_dir = base / Path(video).stem
         code = run_one(video, env, out_dir)
         if code != 0:

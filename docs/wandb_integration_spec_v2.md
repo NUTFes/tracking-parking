@@ -15,6 +15,18 @@
 - `line_detection/` … 2 ライン + 外積法 + ハイブリッド方式（信頼度付き）
 - `roi-counter/` … ROI 内の進行度 `s` による状態機械
 
+> **本ドキュメントの位置づけ（2026-09-10 追記）**
+> 本仕様は2方式が並存していた時期に書かれたものである。その後2ライン方式の採用が決まり
+> （[decisions/0001-two-line-method.md](../decisions/0001-two-line-method.md)）、ROI方式
+> （`roi-counter/`）のコードは本ブランチには存在しない。ROI方式に言及する箇所は、
+> 比較設計の経緯を残すための記述として読むこと。現行コードでの対応は次のとおり。
+>
+> | 本文中の記述 | 現在の場所 |
+> |---|---|
+> | `line_detection/main.py` | `scripts/run_detection.py` |
+> | `common/*.py` | `src/tracking_parking/common/*.py` |
+> | `roi-counter/scripts/*` | `feat/mike/89-bbox-analysis-within-roi` ブランチの `raspi/roi-counter/scripts/*` |
+
 精度指標（Accuracy / Precision / Recall / F1）は **SAM3 による GT を用いて後日別スクリプトで算出する**ため、本実装では「速度・台数の即時記録」と「精度を後から同一 run へ追記できる仕組み」を分けて作る。
 
 ---
@@ -43,7 +55,7 @@
 8. **ネットワークの無い環境（Raspberry Pi 実機）での計測を第一級ユースケースとする。**
    - `WANDB_MODE` 環境変数（`online` / `offline`）を尊重する。offline 時はローカルに記録され、後日 `wandb sync` でアップロードできる。
    - README（または各スクリプトの docstring）に offline 計測 → sync の手順を 3〜4 行で記載すること。
-   - **運用は `offline` に固定する（2026-08-26 決定）**。`online` はネットワークへ到達できない環境で `wandb.init()` がハングし、`WANDB_INIT_TIMEOUT` でも `Settings(init_timeout)` でも打ち切れない。実測値と根拠は `VERIFICATION.md` の0章に記載した。
+   - **運用は `offline` に固定する（2026-08-26 決定）**。`online` はネットワークへ到達できない環境で `wandb.init()` がハングし、`WANDB_INIT_TIMEOUT` でも `Settings(init_timeout)` でも打ち切れない。実測値と根拠は [verification.md](../verification.md) の0章に記載した。
    - **本番運用では `--wandb` / `USE_WANDB` を付けない（2026-08-26 決定）**。ネットワーク断が入出庫カウントの停止に直結する状態を、24/7で動く監視系へ持ち込まないため。ROI方式の `main.py` も同じ理由でW&B非対応のままとする。
 
 ---
