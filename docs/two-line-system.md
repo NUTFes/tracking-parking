@@ -334,7 +334,9 @@ SPOOL_PATH=data/outputs/unsent_events.jsonl          # 送れなかったイベ�
 
 送信するイベントには `request_id`（ローカルの `event_id`、UUID）を必ず含める。サーバー側は
 同じ `request_id` の2回目を既存イベントとして扱い `system_count` を動かさないため、
-接続タイムアウトや応答不明などの失敗はすべて安全に再送できる。設計の詳細は
+接続タイムアウトや応答不明などの失敗はすべて安全に再送できる。`POST /events` は
+イベントの永続化と同時に **202 Accepted** を返し、`system_count` への反映は
+サーバー側のバックグラウンド処理に回る（同期的には反映されない）。設計の詳細は
 [docs/decisions/0002-api-event-delivery.md](decisions/0002-api-event-delivery.md) を参照。
 
 ## アルゴリズム

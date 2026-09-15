@@ -37,15 +37,24 @@ ADR 0001 は「残っている既知の課題」として次の2点を挙げて�
 
 `POST /events` のリクエストに `request_id`（`EventLogger.record_event()` が返す
 `event_id` のUUIDをそのまま使う）を含めて送る。受信側は `parking_events` テーブルへ
-`request_id` のunique制約付きカラムを追加し、同じ `request_id` の2回目を2xxで受理して
-既存イベントをそのまま返す（`system_count` は動かさない）契約とする。
+`request_id` のunique制約付きカラムを追加し、同じ `request_id` の2回目も**202
+Accepted**で受理して既存イベントをそのまま返す契約とする。
 
 この決定により、送信失敗の扱いが大きく単純になった。HTTPのタイムアウトは「リクエストが
 サーバーに届かなかった」ことを意味しない。応答待ちで切れた場合、サーバーは既に
-`system_count` を更新済みかもしれない。べき等キーが無ければ、この「届いたか不明」な
+イベントを永続化済みかもしれない。べき等キーが無ければ、この「届いたか不明」な
 失敗は安全に再送できず、二重計上を避けるために1件を諦めるほかなかった。`request_id`
 があれば、届いていた場合はサーバー側で弾かれるため、届いたかどうかに関わらず再送して
 よい。
+
+**`POST /events` はイベントの永続化と `system_count` への反映を分離している。**
+リクエストはイベントを永続化した時点で即座に **202 Accepted**（`status: "pending"`）
+を返し、`system_count` への反映は `BackgroundTasks` によるキュー処理へ回る
+（キュー処理間隔30秒・stale判定60秒）。したがって「同じ `request_id` を2回送って
+`system_count` が1しか動かないこと」を確認するには、レスポンスを見た直後ではなく
+`parking_events.status` が `processed` になるまで待つ必要がある。これは実装時点の
+想定（同一トランザクション内で `system_count` を更新する）から変わった点で、
+ローカル検証（`docs/decisions/`配下ではなく検証手順側に記載）で確認済み。
 
 送信失敗は診断のため3種類に分類する（`src/tracking_parking/api/failures.py`）。
 
@@ -98,10 +107,11 @@ RETRYとUNKNOWNは再送の可否としては同じ扱いだが、分類自体�
 
 ## 残っている課題
 
-- 受信側APIへの `request_id` カラム追加・unique制約・重複時の応答契約は、本ADR作成
-  時点では受信側チームでの実装・デプロイ待ちである。デプロイされるまでは
-  `POST /events` が `request_id` を黙って無視する（Pydanticの既定 `extra="ignore"`）ため、
-  べき等が実際に効いているかは、デプロイ後に同じ `request_id` を2回送って
-  `system_count` が1しか動かないことを確認するまで確定しない。
+- 受信側APIへの `request_id` カラム追加・unique制約・重複時の応答契約は実装・
+  マージ済み（`tracking-parking-api` の `parking_events.request_id`、unique index
+  `ix_parking_events_request_id`）。べき等が実際に効くことは、ローカル開発スタック
+  （`tracking-parking-center`）上で同じ `request_id` を2回送り、`parking_events.status`
+  が `processed` になった後に `system_count` が1しか動かないことを確認済み。
 - 受信側のDBスキーマ変更を伴うため、本番環境への反映は通常のデプロイ手順とは別に、
   インフラ担当との調整（マイグレーションの適用・ロールバック計画）が必要になる。
+  ローカル検証はあくまで開発スタック上の確認であり、本番DBへの反映はこの限りではない。
