@@ -8,6 +8,19 @@ queue.get()で取り出した要素はワーカーローカルの_inflightスロ
 どの瞬間でもイベントは「キューの中」「_inflight」「決着済み」のいずれかに
 あり、shutdown()は前者2つの両方をスプールへ書く。
 
+この不変条件を守るため、「キューから取り出す」と「_inflightへ代入する」を
+_lock保護の下で1つの操作として行う（_try_process_one()）。queue.get()と
+代入を別々の文として書くと、その間にshutdown()のドレインが割り込み、
+イベントがキューにも_inflightにも属さない瞬間が生まれる。shutdown()側の
+ドレインも同じ_lockで保護し、両者が同時に「取り出し中」の状態を見ないように
+している。
+
+スプールファイルへのアクセス（追記・読み直し・書き戻し）も同じ_lockで
+保護する。replay_spool()は起動直後にワーカースレッドで実行されるが、
+その最中にメインスレッドがshutdown()を呼ぶと、shutdown()もスプールへ
+追記する（_spool_new経由）。replay_spool()の書き戻しをロック無しで
+行うと、その追記をロック前のスナップショットで上書きして消してしまう。
+
 ExperimentLogger（common/wandb_logger.py）はフェイルファストで例外を
 握りつぶさないが、この送信スレッドは意図的に逆の方針を取る。ネットワーク
 断で検知プロセスが死ぬと現場のカウントそのものが止まり、ローカルの
@@ -34,6 +47,12 @@ logger = logging.getLogger(__name__)
 # それでも決着しなければスプールへ落とし、次のイベントへ進む。長時間の
 # 回線断はスプールと起動時のreplay_spool()で回収する。
 RETRY_BACKOFF_SEC: tuple[float, ...] = (1.0, 2.0, 4.0)
+
+# キューが空のときのポーリング間隔。queue.get(timeout=...)による効率的な
+# 待ちではなく短いポーリングにしているのは、取り出しと_inflightへの代入を
+# 同じロックの下で行う必要があり、ロックを保持したままブロッキングする
+# get()は使えないため。
+POLL_INTERVAL_SEC = 0.1
 
 
 class EventApiClient(Protocol):
@@ -114,14 +133,37 @@ class EventSender:
         （届いていればサーバーが2xxで既存イベントを返し、system_countは
         動かさない）。メインスレッドでやると、長時間の回線断の後に検出
         ループの起動が止まるため、必ずワーカースレッド上で行う。
+
+        1件送るたびに、その時点でキューに積まれている新規イベント（検出
+        ループが今まさに検知したもの）を優先して処理する。スプールが
+        大量に残っている状況でこれをしないと、replay完了までワーカーが
+        占有され、新規イベントがキュー満杯で（スプールにも書かれずに）
+        破棄されてしまう。shutdown()が呼ばれた場合も、残りのレコードは
+        送らずに打ち切る（次回起動時のreplayに委ねる）。
+
+        書き戻しはロード時のスナップショットに基づかず、送信直後に
+        ファイルを読み直してから、今回解決できた分（成功・DROP）だけを
+        request_id基準で取り除く。スナップショットのまま書き戻すと、
+        replay実行中にshutdown()が追記したレコード（今回runのイベント）を
+        消してしまうため。
         """
         contents = spool_module.load(self._spool_path)
         if not contents.records and not contents.passthrough_lines:
             return 0
 
-        still_unresolved = []
         replayed = 0
+        resolved_ids: set[str] = set()
+        dropped_ids: set[str] = set()
+        updated: dict[str, spool_module.SpoolRecord] = {}
+
         for record in contents.records:
+            if self._stop_event.is_set():
+                break
+
+            # 新規イベントを塞がないよう、次のreplayへ進む前にキューを吐き出す。
+            while self._try_process_one():
+                pass
+
             payload = EventPayload(
                 request_id=record.request_id,
                 event_type=record.event_type,
@@ -131,18 +173,25 @@ class EventSender:
             result = self._send_with_retry(payload)
             replayed += 1
             if result.disposition == Disposition.OK:
-                continue
-            if result.disposition == Disposition.DROP:
+                resolved_ids.add(record.request_id)
+            elif result.disposition == Disposition.DROP:
                 self._log(f"[api] スプール中のイベントを破棄しました（設定の誤り）: {result.error}")
-                continue
-            still_unresolved.append(
-                record.with_retry_result(disposition=str(result.disposition), error=result.error)
-            )
+                dropped_ids.add(record.request_id)
+            else:
+                updated[record.request_id] = record.with_retry_result(
+                    disposition=str(result.disposition), error=result.error
+                )
 
-        spool_module.rewrite(
-            self._spool_path, records=still_unresolved, passthrough_lines=contents.passthrough_lines
-        )
         with self._lock:
+            current = spool_module.load(self._spool_path)
+            remaining_records = [
+                updated.get(r.request_id, r)
+                for r in current.records
+                if r.request_id not in resolved_ids and r.request_id not in dropped_ids
+            ]
+            spool_module.rewrite(
+                self._spool_path, records=remaining_records, passthrough_lines=current.passthrough_lines
+            )
             self._stats["replayed"] += replayed
         return replayed
 
@@ -153,19 +202,34 @@ class EventSender:
             logger.exception("[api] 起動時のスプール再送で例外が発生しました")
 
         while not self._stop_event.is_set():
+            if not self._try_process_one():
+                self._sleep(POLL_INTERVAL_SEC)
+
+    def _try_process_one(self) -> bool:
+        """キューから1件取り出して処理する。空なら何もせずFalseを返す。
+
+        取り出し（queue.get_nowait）と_inflightへの代入を同じ_lockの下で
+        一体の操作として行う。別々の文にすると、その間にshutdown()の
+        ドレインが割り込んだとき、イベントがキューにも_inflightにも
+        属さない瞬間ができ、取りこぼす。
+        """
+        with self._lock:
             try:
-                payload = self._queue.get(timeout=0.5)
+                payload = self._queue.get_nowait()
+                self._inflight = payload
             except queue.Empty:
-                continue
-            self._inflight = payload
-            try:
-                self._process(payload)
-            except Exception:
-                # ワーカースレッドは絶対に死なせない。未知の例外はスプールへ退避して次へ進む。
-                logger.exception("[api] 送信ワーカーで未知の例外が発生しました。イベントをスプールへ退避します")
-                self._spool_new(payload, disposition=Disposition.UNKNOWN, error="worker crashed")
-            finally:
+                return False
+
+        try:
+            self._process(payload)
+        except Exception:
+            # ワーカースレッドは絶対に死なせない。未知の例外はスプールへ退避して次へ進む。
+            logger.exception("[api] 送信ワーカーで未知の例外が発生しました。イベントをスプールへ退避します")
+            self._spool_new(payload, disposition=Disposition.UNKNOWN, error="worker crashed")
+        finally:
+            with self._lock:
                 self._inflight = None
+        return True
 
     def _process(self, payload: EventPayload) -> None:
         result = self._send_with_retry(payload)
@@ -202,8 +266,8 @@ class EventSender:
             error=error,
             execution_id=self._execution_id,
         )
-        spool_module.append_record(self._spool_path, record)
         with self._lock:
+            spool_module.append_record(self._spool_path, record)
             self._stats["spooled"] += 1
 
     def shutdown(self, flush_timeout_sec: float) -> dict:
@@ -213,21 +277,30 @@ class EventSender:
         としてスプールへ退避する。request_idがあるので、実際には送信済み
         だったとしても次回起動時の再送で二重計上にはならない
         （サーバーが2xxで既存イベントを返すだけ）。
+
+        キューのドレインと_inflightの読み取りは、ワーカー側の取り出しと
+        同じ_lockの下で行う。ロック無しで行うと、ワーカーが「キューから
+        取り出した直後・_inflightへ代入する前」の瞬間を踏んだとき、
+        キューは空・_inflightもNoneに見えてしまい、そのイベントを
+        取りこぼす（_try_process_one()のdocstring参照）。
         """
         deadline = time.monotonic() + max(flush_timeout_sec, 0.0)
         while time.monotonic() < deadline:
-            if self._queue.empty() and self._inflight is None:
+            with self._lock:
+                idle = self._queue.empty() and self._inflight is None
+            if idle:
                 break
             self._sleep(0.02)
 
-        remaining: list[EventPayload] = []
-        while True:
-            try:
-                remaining.append(self._queue.get_nowait())
-            except queue.Empty:
-                break
-        if self._inflight is not None:
-            remaining.append(self._inflight)
+        with self._lock:
+            remaining: list[EventPayload] = []
+            while True:
+                try:
+                    remaining.append(self._queue.get_nowait())
+                except queue.Empty:
+                    break
+            if self._inflight is not None:
+                remaining.append(self._inflight)
 
         for payload in remaining:
             self._spool_new(payload, disposition=Disposition.UNKNOWN, error="shutdown: flush期限までに決着しなかった")

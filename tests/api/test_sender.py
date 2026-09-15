@@ -229,3 +229,182 @@ def test_replay_spoolで送るrequest_idはスプールのものと同じ(tmp_pa
     sender = EventSender(RecordingClient(), spool_path, sleep=no_sleep, log=lambda *_: None)
     sender.replay_spool()
     assert seen["request_id"] == "same-id"
+
+
+def test_replayで失敗し続けるレコードはattemptsが更新されて残る(tmp_path):
+    """replay対象が今回も送信できなかった場合、with_retry_result()で
+    attempts/last_disposition/last_errorを更新した上でスプールに残ることを
+    確認する。merge方式の書き戻し（現在のファイルを読み直して更新する）でも
+    この更新が失われないことの固定。"""
+    from tracking_parking.api.spool import append_record, load, new_record
+
+    spool_path = tmp_path / "spool.jsonl"
+    append_record(
+        spool_path,
+        new_record(
+            spooled_at="2026-09-15T09:00:00+09:00", request_id="still-failing",
+            event_type="entry", detected_at="2026-09-15T08:59:00+09:00",
+            vehicle_track_id=None, disposition="unknown", error="first failure", execution_id=None,
+        ),
+    )
+
+    client = CountingClient(Disposition.UNKNOWN, error="second failure")
+    sender = EventSender(client, spool_path, sleep=no_sleep, log=lambda *_: None)
+    sender.replay_spool()
+
+    contents = load(spool_path)
+    assert len(contents.records) == 1
+    record = contents.records[0]
+    assert record.request_id == "still-failing"
+    assert record.attempts == 2  # 1（初期スプール時）+ 1（今回のreplay）
+    assert record.last_disposition == "unknown"
+    assert record.last_error == "second failure"
+
+
+def test_replay中に追記されたレコードはrewriteで消えない(tmp_path):
+    """レビュー指摘1の回帰テスト。replay_spool()の書き戻しがロード時の
+    スナップショットに基づいていると、replay実行中に（shutdown()などが）
+    追記したレコードを、replay完了時のrewrite()が上書きして消してしまう。
+    postEventの呼び出し中（=replayがまだ実行中）に別のレコードを追記して
+    この状況を再現し、追記分が生き残ることを確認する。"""
+    from tracking_parking.api.spool import append_record, load, new_record
+
+    spool_path = tmp_path / "spool.jsonl"
+    append_record(
+        spool_path,
+        new_record(
+            spooled_at="2026-09-15T09:00:00+09:00", request_id="replay-target",
+            event_type="entry", detected_at="2026-09-15T08:59:00+09:00",
+            vehicle_track_id="1", disposition="unknown", error="prev", execution_id=None,
+        ),
+    )
+
+    class AppendingClient:
+        """post_eventの最中に、shutdown()が別のイベントを退避する状況を模す。"""
+
+        def post_event(self, event):
+            append_record(
+                spool_path,
+                new_record(
+                    spooled_at="2026-09-15T09:05:00+09:00", request_id="shutdown-added",
+                    event_type="exit", detected_at="2026-09-15T09:04:00+09:00",
+                    vehicle_track_id="2", disposition="unknown", error="shutdown中の退避", execution_id=None,
+                ),
+            )
+            return SendResult(disposition=Disposition.OK, status_code=201)
+
+    sender = EventSender(AppendingClient(), spool_path, sleep=no_sleep, log=lambda *_: None)
+    sender.replay_spool()
+
+    contents = load(spool_path)
+    ids = {r.request_id for r in contents.records}
+    assert ids == {"shutdown-added"}  # replay対象は成功して消え、追記分だけが残る
+
+
+def test_replay中に積まれた新規イベントを次のreplay対象より先に処理する(tmp_path):
+    """レビュー指摘4の回帰テスト。スプールに複数件残っている状況でreplayが
+    長引くと、検知ループが新規にenqueueしたイベントがキュー満杯（かつ
+    スプールにも書かれず）で破棄される。1件replayするたびにキューを
+    優先的に処理することで、新規イベントを待たせないことを確認する。"""
+    from tracking_parking.api.spool import append_record, new_record
+
+    spool_path = tmp_path / "spool.jsonl"
+    for i in range(2):
+        append_record(
+            spool_path,
+            new_record(
+                spooled_at="x", request_id=f"spool-{i}", event_type="entry",
+                detected_at="y", vehicle_track_id=None,
+                disposition="unknown", error=None, execution_id=None,
+            ),
+        )
+
+    order: list[str] = []
+    sender_holder: dict = {}
+
+    class OrderRecordingClient:
+        def post_event(self, event):
+            order.append(event.request_id)
+            if event.request_id == "spool-0":
+                # spool-0の送信中に、検知ループが新規イベントをenqueueしたとみなす。
+                sender_holder["sender"].enqueue(make_payload("live-event"))
+            return SendResult(disposition=Disposition.OK, status_code=201)
+
+    sender = EventSender(OrderRecordingClient(), spool_path, sleep=no_sleep, log=lambda *_: None)
+    sender_holder["sender"] = sender
+    sender.replay_spool()
+
+    assert order == ["spool-0", "live-event", "spool-1"]
+
+
+def test_取り出しとinflight代入はshutdownのドレインと排他する(tmp_path, monkeypatch):
+    """レビュー指摘2の回帰テスト。
+
+    queue.get()と_inflightへの代入を別々の文で書くと、その間にshutdown()の
+    ドレインが割り込み、イベントがキューにも_inflightにも属さない瞬間が
+    できて取りこぼす。この窓は1バイトコード分程度しかなく、多数回試行する
+    ストレステストでは（実際に試したところ）ほぼ再現しなかったため、
+    タイミングに依存しない形で直接確認する。
+
+    _try_process_one()のqueue.get_nowait()を差し替えて、_lockを保持した
+    ままわざと止める。その間、shutdown()のドレインが使う同じ_lockを
+    別スレッドから取ろうとしても取れない（＝取り出しと代入の間に
+    割り込めない）ことを見る。
+    """
+    client = CountingClient(Disposition.OK, status_code=201)
+    spool_path = tmp_path / "spool.jsonl"
+    sender = EventSender(client, spool_path, sleep=no_sleep, log=lambda *_: None)
+    sender.enqueue(make_payload("r1"))
+
+    entered_critical_section = threading.Event()
+    release_critical_section = threading.Event()
+    original_get_nowait = sender._queue.get_nowait
+
+    def slow_get_nowait():
+        item = original_get_nowait()
+        entered_critical_section.set()
+        release_critical_section.wait(timeout=5.0)
+        return item
+
+    monkeypatch.setattr(sender._queue, "get_nowait", slow_get_nowait)
+
+    worker = threading.Thread(target=sender._try_process_one)
+    worker.start()
+    assert entered_critical_section.wait(timeout=2.0), "get_nowait()に到達しなかった"
+
+    # ここでワーカーは_lockを保持したまま（get_nowait()の中で）止まっている。
+    # shutdown()のドレインが使う_lockを、別スレッドから同じように取ろうと
+    # 試みる。取れてしまえば排他になっていない。
+    lock_acquired = threading.Event()
+
+    def try_acquire_same_lock():
+        with sender._lock:
+            pass
+        lock_acquired.set()
+
+    contender = threading.Thread(target=try_acquire_same_lock)
+    contender.start()
+    assert not lock_acquired.wait(timeout=0.3), (
+        "ワーカーが取り出し中にもかかわらず、shutdown側が同じロックを取得できてしまった"
+        "（取り出しと_inflight代入がshutdownのドレインと排他されていない）"
+    )
+
+    release_critical_section.set()
+    worker.join(timeout=2.0)
+    contender.join(timeout=2.0)
+    assert lock_acquired.is_set(), "ロック解放後もshutdown側が取得できなかった"
+
+
+def test_連続したenqueueとshutdownでイベントを取りこぼさない(tmp_path):
+    """上のテストが単一のタイミングを直接確認するのに対し、こちらは
+    実運用に近い形（start()した実スレッド相手にenqueueしてすぐshutdown）
+    を繰り返し、毎回必ず送信済みかスプールのどちらかに記録されることを
+    確認する。"""
+    for i in range(50):
+        client = CountingClient(Disposition.OK, status_code=201)
+        spool_path = tmp_path / f"spool_{i}.jsonl"
+        sender = EventSender(client, spool_path, sleep=no_sleep, log=lambda *_: None)
+        sender.start()
+        sender.enqueue(make_payload(f"r{i}"))
+        stats = sender.shutdown(flush_timeout_sec=0.5)
+        assert stats["sent"] + stats["spooled"] == 1, f"iteration {i}: イベントを取りこぼした"
