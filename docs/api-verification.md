@@ -179,3 +179,59 @@ uv run python scripts/run_detection.py \
 
 `Ctrl+C`（`SIGINT`）は `finally` 節を通るため、動画全体を処理し終えなくても
 早期に打ち切って確認できる。
+
+## 8. 動画入力での送信配線の確認（`--simulate-camera-input`）
+
+上の1〜7で確認した範囲には抜けがある。`check_api_connection.py` は検知ループを
+迂回するため契約(HTTPレベルの応答)しか確認できず、第7節（送信ガード）は送信
+**ゼロ**であることの確認にすぎない。**「実際の検知ループが検出したイベントが、
+`run_detection.py` の `api.enqueue_event(...)` 呼び出しを通って本物のAPIへ着地する」
+という肯定側の経路**は、この節で初めて通す。
+
+カメラがまだ使えない段階（エッジ機の検証は動画→カメラの順で進める）でこれを
+確認するため `--simulate-camera-input` を使う。動画ファイル入力をガード判定上
+だけカメラ扱いにする、送信経路検証専用のフラグ。`API_BASE_URL` が
+ローカル/LAN（`is_local_network_url()`）以外を指していると起動そのものを拒否する
+（**解除する手段は無い**）ため、本番/stagingの `system_count` を動かす心配なく
+何度でも実行できる。詳細は [docs/decisions/0002-api-event-delivery.md](decisions/0002-api-event-delivery.md) の追記を参照。
+
+`1787014266.421887.mp4`（GT: `in=3, out=3`）を使う。件数が少ない上、entry/exit
+両方を1回の実行で確認できるため。
+
+```bash
+docker compose --env-file .env.develop exec api python scripts/seed_demo_data.py
+
+# --envは指定ファイルだけを読むため、API設定はインラインの環境変数で与える
+API_ENABLED=true \
+API_BASE_URL=http://localhost:8000/api/v1 \
+DEVICE_API_KEY=<key> \
+uv run python scripts/run_detection.py \
+  --input data/inputs/1787014266.421887.mp4 --env newcam.env --simulate-camera-input
+```
+
+確認項目:
+
+- 起動ログに `✓ API送信を有効化` が出ること（第7節の逆側）
+- `parking_events` に6行（`entry`×3、`exit`×3）増えること。`"IN"`/`"OUT"` から
+  `"entry"`/`"exit"` への変換が両方向とも正しいことの確認になる
+- `request_id` がローカルの `events_*.json` と DB とで一致すること（ダッシュの
+  有無を除く）
+- `status` が `processed` になった後、`system_count` がGTどおりに動くこと
+- **`run_config`（W&B manifest）の `input_type` が `"file"` のまま**であること
+  （ガード判定にだけ `"camera"` として扱われ、記録は嘘をつかない設計の確認）
+
+安全側の確認も行う。
+
+```bash
+# 非ローカル宛先では起動を拒否する（YOLOの重み読み込み前に即終了、逃げ道なし）
+API_ENABLED=true API_BASE_URL=https://api.trapa.nutfes.net/api/v1 DEVICE_API_KEY=x \
+uv run python scripts/run_detection.py \
+  --input data/inputs/1787014266.421887.mp4 --env newcam.env --simulate-camera-input
+
+# --no-apiが優先されること（何があっても送らない）
+... --simulate-camera-input --no-api   # → 送信ゼロ
+```
+
+これが通れば、送信経路そのものの検証はローカルで完結する。エッジ機での実機
+検証（第6層・カメラ実機）は、画角・Issue #103（Jetson Orin NXでのGUI起動）・
+実機負荷といったカメラ固有の問題だけにスコープが絞られる。
