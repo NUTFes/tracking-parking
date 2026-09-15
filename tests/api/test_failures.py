@@ -92,6 +92,13 @@ def test_4xxはDROP():
         assert classify_status(code) == Disposition.DROP
 
 
+def test_408と429は一時的な失敗としてUNKNOWNに分類する():
+    """設定の誤りではなく一時的な失敗のため、他の4xxとは異なりDROPにしない。
+    DROPはスプールに残らず再送されないため、混雑時に恒久的な欠落になる。"""
+    assert classify_status(408) == Disposition.UNKNOWN
+    assert classify_status(429) == Disposition.UNKNOWN
+
+
 def test_3xxはDROP():
     assert classify_status(301) == Disposition.DROP
 

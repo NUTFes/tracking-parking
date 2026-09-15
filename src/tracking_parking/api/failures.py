@@ -89,12 +89,17 @@ def classify_status(status_code: int) -> Disposition:
     """HTTPステータスコードを分類する。
 
     POSTはallow_redirects=Falseで投げるため3xxは想定外（設定の誤り扱い）。
-    4xxはAPIキーやベースURL、ペイロードの誤りで再送しても直らない。
-    5xxはサーバーがトランザクションをコミットしてから落ちた可能性がある。
+    408（Request Timeout）と429（Too Many Requests）は、APIキーやURL・
+    ペイロードの誤りとは性質が異なる一時的な失敗のため、他の4xxとは分けて
+    UNKNOWN（再送可能）に含める。それ以外の4xxは再送しても直らない設定の
+    誤りとして扱う。5xxはサーバーがトランザクションをコミットしてから
+    落ちた可能性がある。
     """
     if 200 <= status_code < 300:
         return Disposition.OK
     if 500 <= status_code < 600:
+        return Disposition.UNKNOWN
+    if status_code in (408, 429):
         return Disposition.UNKNOWN
     return Disposition.DROP
 
