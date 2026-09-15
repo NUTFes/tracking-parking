@@ -318,17 +318,6 @@ def process_video(
     wandb_logger.init_accuracy_placeholders()
     wandb_logger.define_metric("net_flow", step_metric="t_rel_sec")
 
-    # API送信ランタイムを組み立てる。送信ガード（カメラ入力 かつ API_ENABLED=true）は
-    # ApiRuntime.create()の内部で判定する。動画ファイル入力では常に無効になる。
-    api = ApiRuntime.create(
-        ApiSettings.from_env(home_dir=config.home_dir),
-        input_type=input_type,
-        execution_id=run_config["execution_id"],
-        force_disabled=no_api,
-        simulate_camera_input=simulate_camera_input,
-    )
-    api.start()
-
     # 2. フレーム毎処理
     frame_id = 0
     timing_records: list[FrameTiming] = []
@@ -337,8 +326,25 @@ def process_video(
     prev_count_out = 0
     synchronize_model = model_synchronizer(model, runtime.yolo_device)
     exit_code = 0
+    # try:の外で例外が出るとfinallyのapi.shutdown()がNameErrorになるため、
+    # ApiRuntime.create()より先にNoneで初期化しておく。
+    api: ApiRuntime | None = None
 
     try:
+        # API送信ランタイムを組み立てる。送信ガード（カメラ入力 かつ
+        # API_ENABLED=true）はApiRuntime.create()の内部で判定する。動画
+        # ファイル入力では常に無効になる。DEVICE_API_KEY未設定などで
+        # settings.validate()がValueErrorを出す場合があるため、try:の中で
+        # 行う（外だとcap.release()等の後片付けがfinallyで飛ばされる）。
+        api = ApiRuntime.create(
+            ApiSettings.from_env(home_dir=config.home_dir),
+            input_type=input_type,
+            execution_id=run_config["execution_id"],
+            force_disabled=no_api,
+            simulate_camera_input=simulate_camera_input,
+        )
+        api.start()
+
         while cap.isOpened():
             with elapsed_timer() as end_to_end_timer:
                 with elapsed_timer() as read_timer:
@@ -603,7 +609,8 @@ def process_video(
             out.release()
         if config.show_display:
             cv2.destroyAllWindows()
-        api.shutdown()
+        if api is not None:
+            api.shutdown()
         wandb_logger.finish(exit_code=exit_code)
 
 
