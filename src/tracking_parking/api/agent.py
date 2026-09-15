@@ -28,7 +28,7 @@ from tracking_parking.api.failures import Disposition
 logger = logging.getLogger(__name__)
 
 RESTART_UNSUPPORTED_MESSAGE = (
-    "M1ではプロセスの再起動に未対応です。プロセス管理の仕組みがエッジ側リポジトリに"
+    "プロセスの再起動に未対応です。プロセス管理の仕組みがエッジ側リポジトリに"
     "ないため、手動で再起動してください。"
 )
 
