@@ -9,9 +9,10 @@
 実物のAPI相手に動かす。カメラも動画もモデル重みも要らない。
 
 `run_detection.py` の送信ガード（カメラ入力 かつ API_ENABLED=true）に
-相当する条件は、このスクリプト自体には無い。代わりに、API_BASE_URLの
-ホストがlocalhost/127.0.0.1以外を指しているときは即座に終了する
-（--i-know-this-is-not-localで解除できる）。ローカル開発スタック以外へ
+相当する条件は、このスクリプト自体には無い。代わりに、API_BASE_URLが
+ローカル/LAN以外を指しているとき（`is_local_network_url()`、詳細は
+`tracking_parking/api/settings.py`）は即座に終了する
+（--i-know-this-is-not-localで解除できる）。ローカル/LAN開発スタック以外へ
 誤って本物のイベントを送り込まないための安全弁。
 
 使い方:
@@ -28,7 +29,6 @@ import uuid
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import urlparse
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -37,7 +37,7 @@ from dotenv import load_dotenv
 from tracking_parking.api.client import ApiClient, EventPayload
 from tracking_parking.api.sender import EventSender
 from tracking_parking.api.agent import HeartbeatAgent
-from tracking_parking.api.settings import ApiSettings
+from tracking_parking.api.settings import ApiSettings, is_local_network_url
 
 
 def _load_settings(env_path: str | None) -> ApiSettings:
@@ -54,18 +54,21 @@ def _load_settings(env_path: str | None) -> ApiSettings:
 
 
 def _guard_local_only(settings: ApiSettings, *, override: bool) -> None:
-    """API_BASE_URLがローカル開発スタック以外を指していないか確認する。
+    """API_BASE_URLがローカル/LAN開発スタック以外を指していないか確認する。
 
     run_detection.pyの送信ガード（カメラ入力かどうか）に相当する条件が
     このスクリプトには無い。誤って本番やstagingへ向けたまま実行すると、
     テスト用のダミーイベントがそのまま本物のsystem_countを動かしてしまう。
+
+    判定はis_local_network_url()に委ねる（--simulate-camera-inputと共有）。
+    localhost完全一致より広く、LAN上のIPやmDNS名も許可する一方、
+    本番ドメインは確実に弾く。
     """
     if override:
         return
-    host = urlparse(settings.base_url).hostname or ""
-    if host not in ("localhost", "127.0.0.1"):
+    if not is_local_network_url(settings.base_url):
         print(
-            f"エラー: API_BASE_URLがローカル以外を指しています: {settings.base_url}\n"
+            f"エラー: API_BASE_URLがローカル/LAN以外を指しています: {settings.base_url}\n"
             "本番/stagingへ向けて実行しないでください。意図してのことなら "
             "--i-know-this-is-not-local を付けてください。",
             file=sys.stderr,
