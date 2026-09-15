@@ -3,9 +3,43 @@ API送信の接続設定
 .envファイルから読み込み、ApiSettingsオブジェクトとして提供する
 """
 
+import ipaddress
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlparse
+
+
+def is_local_network_url(base_url: str) -> bool:
+    """送信先URLがローカル開発スタックまたはLAN上を指しているかを判定する。
+
+    検証用の送信（動画入力をカメラ扱いにする--simulate-camera-input、および
+    scripts/check_api_connection.py）が、本番やstagingのsystem_countを
+    誤って動かさないための安全弁。エッジ機から開発機のスタックを指す場合は
+    localhostではなくLAN上のIPやmDNS名になるため、localhost完全一致では狭すぎる。
+
+    Trueと判定するもの:
+        - localhost
+        - *.local（mDNS。例: jetson.local）
+        - ドットを含まない裸のホスト名（LAN上のマシン名やDockerサービス名）
+        - プライベートIP（192.168.*/10.*/172.16-31.*、127.0.0.1を含む）
+
+    api.trapa.nutfes.net のような実FQDNは上のいずれにも該当せずFalseになる。
+
+    DNS解決は行わない。名前解決の失敗や遅延に安全判定を依存させると、
+    ネットワークが不調なときに「判定できないので通す」か「正しい宛先なのに
+    弾かれる」のどちらかを選ぶことになり、どちらも望ましくないため。
+    """
+    host = urlparse(base_url).hostname or ""
+    if not host:
+        return False
+    if host == "localhost" or host.endswith(".local"):
+        return True
+    try:
+        return ipaddress.ip_address(host).is_private
+    except ValueError:
+        # IPリテラルではない。ドットを含まない裸のホスト名はLAN内とみなす。
+        return "." not in host
 
 
 @dataclass(frozen=True)

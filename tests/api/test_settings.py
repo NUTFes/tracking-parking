@@ -7,7 +7,7 @@ API_ENABLED=false（既定）はrequests未importの検知処理を含む全て�
 """
 import pytest
 
-from tracking_parking.api.settings import ApiSettings
+from tracking_parking.api.settings import ApiSettings, is_local_network_url
 
 API_ENV_KEYS = (
     "API_ENABLED", "API_BASE_URL", "DEVICE_API_KEY",
@@ -112,3 +112,43 @@ def test_timeoutプロパティはconnectとreadのタプルを返す(clean_env,
     monkeypatch.setenv("API_READ_TIMEOUT_SEC", "4.0")
     settings = ApiSettings.from_env()
     assert settings.timeout == (2.0, 4.0)
+
+
+class Test_is_local_network_url:
+    """--simulate-camera-input（動画をカメラ扱いにする検証フラグ）と
+    check_api_connection.pyの両方が、本番/stagingへ誤って送らないための
+    安全判定。エッジ機からLAN上の開発機スタックを指す場合（localhostでは
+    なくIPやmDNS名になる）でも通り、実際の本番ドメインは確実に弾かれる
+    ことを境界値で固定する。
+    """
+
+    def test_localhostはTrue(self):
+        assert is_local_network_url("http://localhost:8000/api/v1") is True
+
+    def test_ループバックIPはTrue(self):
+        assert is_local_network_url("http://127.0.0.1:8000/api/v1") is True
+
+    def test_プライベートIP_192はTrue(self):
+        assert is_local_network_url("http://192.168.1.10:8000/api/v1") is True
+
+    def test_プライベートIP_10はTrue(self):
+        assert is_local_network_url("http://10.0.0.5:8000/api/v1") is True
+
+    def test_mDNS名はTrue(self):
+        assert is_local_network_url("http://jetson.local:8000/api/v1") is True
+
+    def test_ドットを含まない裸のホスト名はTrue(self):
+        """LAN上のマシン名やDockerサービス名（例: dev-machine, api）を想定。"""
+        assert is_local_network_url("http://dev-machine:8000/api/v1") is True
+
+    def test_本番ドメインはFalse(self):
+        assert is_local_network_url("https://api.trapa.nutfes.net/api/v1") is False
+
+    def test_パブリックIPはFalse(self):
+        assert is_local_network_url("http://8.8.8.8/api/v1") is False
+
+    def test_空文字はFalse(self):
+        assert is_local_network_url("") is False
+
+    def test_ホスト名を取れないURLはFalse(self):
+        assert is_local_network_url("not-a-url") is False
