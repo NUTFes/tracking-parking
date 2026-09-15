@@ -116,12 +116,22 @@ class ApiSettings:
 
         enabled=Falseのときはbase_url/api_keyが空でも正常（既存利用者全員が
         通る既定経路）。数値系のチェックはenabledに関わらず常に行う。
+
+        base_urlはスキーム（http://またはhttps://）の有無も確認する。
+        「空でないこと」だけを見ていると、http://の書き忘れ
+        （例: API_BASE_URL=localhost:8000/api/v1）が起動時には通り、
+        送信時にMissingSchemaで分類されてイベントが黙って破棄される
+        （DROPはスプールにも残らないため）まで気づけない。
         """
         errors = []
 
         if self.enabled:
             if not self.base_url:
                 errors.append("API_ENABLED=true のとき API_BASE_URL が .env に設定されている必要があります")
+            elif urlparse(self.base_url).scheme not in ("http", "https"):
+                errors.append(
+                    f"API_BASE_URL は http:// または https:// で始まる必要があります: {self.base_url}"
+                )
             if not self.api_key:
                 errors.append("API_ENABLED=true のとき DEVICE_API_KEY が .env に設定されている必要があります")
 

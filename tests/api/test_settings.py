@@ -61,6 +61,25 @@ def test_有効時にURLとキーが揃っていれば通る(clean_env, monkeypa
     settings.validate()
 
 
+def test_有効時にスキーム無しのURLはエラーになる(clean_env, monkeypatch):
+    """http://の書き忘れ（レビュー指摘5）。空でないことしか見ていないと、
+    起動は通ってしまい送信時にMissingSchema→DROPで黙って破棄される。"""
+    monkeypatch.setenv("API_ENABLED", "true")
+    monkeypatch.setenv("API_BASE_URL", "localhost:8000/api/v1")
+    monkeypatch.setenv("DEVICE_API_KEY", "secret-key")
+    settings = ApiSettings.from_env()
+    with pytest.raises(ValueError, match="API_BASE_URL"):
+        settings.validate()
+
+
+def test_有効時にhttpsのURLは通る(clean_env, monkeypatch):
+    monkeypatch.setenv("API_ENABLED", "true")
+    monkeypatch.setenv("API_BASE_URL", "https://api.trapa.nutfes.net/api/v1")
+    monkeypatch.setenv("DEVICE_API_KEY", "secret-key")
+    settings = ApiSettings.from_env()
+    settings.validate()
+
+
 @pytest.mark.parametrize("key,value", [
     ("API_CONNECT_TIMEOUT_SEC", "0"),
     ("API_CONNECT_TIMEOUT_SEC", "-1"),
