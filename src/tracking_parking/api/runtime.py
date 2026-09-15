@@ -8,7 +8,14 @@ ExperimentLogger（common/wandb_logger.py）のenabled=False完全no-op
 
 動画ファイル入力では絶対に送信しない。検証の再実行がそのまま本番の
 system_countへ積み上がるためで、これは利便性ではなく安全性の要件。
-逆向きの「ファイル入力でも強制送信する」オプションは設けない。
+「ファイル入力でも本番へ強制送信する」オプションは設けない。
+
+一方、simulate_camera_input（--simulate-camera-input）は上とは別物。
+カメラがまだ使えない段階で、動画による検知結果が実際に送信コードへ
+正しく届くこと（配線そのもの）を検証するための、送信先がローカル/LAN
+（is_local_network_url()）のときだけ働く手段。本番/staging相当のURLでは
+create()がValueErrorを出して起動させない（逃げ道なし）。
+「本番へは構造的に届かない」ことでADRの意図と両立させている。
 
 requests.Sessionはスレッドセーフを保証していないため、送信ワーカーと
 ハートビートスレッドで別々のApiClientインスタンスを持つ。
@@ -20,7 +27,7 @@ from typing import Callable
 from tracking_parking.api.agent import HeartbeatAgent
 from tracking_parking.api.client import ApiClient, EventPayload
 from tracking_parking.api.sender import EventSender
-from tracking_parking.api.settings import ApiSettings
+from tracking_parking.api.settings import ApiSettings, is_local_network_url
 
 logger = logging.getLogger(__name__)
 
@@ -64,15 +71,36 @@ class ApiRuntime:
         input_type: str,
         execution_id: str,
         force_disabled: bool = False,
+        simulate_camera_input: bool = False,
         log: Callable[[str], None] = print,
     ) -> "ApiRuntime":
         """送信ガード：カメラ入力であること かつ API_ENABLED が真であること。
 
         force_disabledはCLIの--no-apiフラグ相当。.envを書き換えずに送信
-        だけ止めたいときに使う。逆向きの「ファイル入力でも強制送信する」
-        引数は提供しない（ガードは利便性ではなく安全性の要件のため）。
+        だけ止めたいときに使う。
+
+        simulate_camera_inputは--simulate-camera-inputフラグ相当。ファイル
+        入力をガード判定上だけカメラ扱いにする（input_type自体は書き換え
+        ない。LINE_CONDITION_KEYSのハッシュ元であり、run_configへ嘘を
+        記録しないため）。force_disabledが真なら、simulate_camera_inputが
+        真でも送信は無効になる（--no-apiは「何があっても送らない」で
+        あるべきため）。
+
+        simulate_camera_input=Trueのとき、settings.base_urlが
+        is_local_network_url()でTrueと判定できなければ、force_disabledの
+        値に関わらずValueErrorを送出し起動させない（逃げ道なし）。本番/
+        stagingのsystem_countを動画の繰り返し検証で汚さないという設計上
+        の保証を、規約ではなくコードで強制する。
         """
-        enabled = settings.enabled and input_type == "camera" and not force_disabled
+        if simulate_camera_input and not is_local_network_url(settings.base_url):
+            raise ValueError(
+                "--simulate-camera-inputはAPI_BASE_URLがローカル/LAN以外のときは使えません: "
+                f"{settings.base_url}\n"
+                "動画をカメラ扱いにする検証は、本番/stagingのsystem_countを"
+                "誤って動かさないためローカル/LAN限定です。"
+            )
+        effective_input_type = "camera" if simulate_camera_input else input_type
+        enabled = settings.enabled and effective_input_type == "camera" and not force_disabled
         if not enabled:
             return cls(
                 sender=None, agent=None, event_client=None, heartbeat_client=None,

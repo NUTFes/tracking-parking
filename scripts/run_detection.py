@@ -56,7 +56,7 @@ from tracking_parking.common.ground_truth import (
     load_ground_truth,
 )
 from tracking_parking.api.runtime import ApiRuntime
-from tracking_parking.api.settings import ApiSettings
+from tracking_parking.api.settings import ApiSettings, is_local_network_url
 
 
 WEBCAM_FPS = 30.0
@@ -152,6 +152,7 @@ def process_video(
     runtime: RuntimeSettings | None = None,
     ground_truth: GroundTruth | None = None,
     no_api: bool = False,
+    simulate_camera_input: bool = False,
 ):
     """
     動画を処理
@@ -324,6 +325,7 @@ def process_video(
         input_type=input_type,
         execution_id=run_config["execution_id"],
         force_disabled=no_api,
+        simulate_camera_input=simulate_camera_input,
     )
     api.start()
 
@@ -645,6 +647,12 @@ def main():
         help=".envのAPI_ENABLEDに関わらず、API送信だけを無効化する（実機デバッグ用）"
     )
     parser.add_argument(
+        "--simulate-camera-input",
+        action="store_true",
+        help="動画ファイル入力をカメラ入力とみなしてAPI送信を有効化する（送信経路の検証用。"
+             "API_BASE_URLがローカル/LAN以外のときは起動を拒否する。解除する手段は無い）"
+    )
+    parser.add_argument(
         "--device-name",
         default=None,
         help="比較対象デバイス名"
@@ -667,6 +675,10 @@ def main():
         print("\n使用例:")
         print("  python scripts/run_detection.py --input data/inputs/test.mp4")
         print("  python scripts/run_detection.py --camera 0 --display")
+        return 1
+
+    if args.simulate_camera_input and args.camera is not None:
+        print("エラー: --simulate-camera-inputはカメラ入力（--camera）には不要です")
         return 1
 
     # 入力ソースを決定
@@ -703,6 +715,20 @@ def main():
         print(f"設定エラー: {e}")
         return 1
 
+    # --simulate-camera-inputの宛先チェックをここで先に行う（fail fast）。
+    # ApiRuntime.create()内でも同じ判定を行う（権威的なチェック）が、ここで
+    # 弾いておけばYOLOモデルの読み込み前に終了でき、実機でのデバッグ体験が良い。
+    if args.simulate_camera_input:
+        api_settings = ApiSettings.from_env(home_dir=config.home_dir)
+        if not is_local_network_url(api_settings.base_url):
+            print(
+                f"エラー: --simulate-camera-inputはAPI_BASE_URLがローカル/LAN以外のときは"
+                f"使えません: {api_settings.base_url}\n"
+                "動画をカメラ扱いにする検証は、本番/stagingのsystem_countを"
+                "誤って動かさないためローカル/LAN限定です。"
+            )
+            return 1
+
     # 動画を処理
     try:
         runtime = RuntimeSettings.from_env()
@@ -715,6 +741,7 @@ def main():
             runtime=runtime,
             ground_truth=ground_truth,
             no_api=args.no_api,
+            simulate_camera_input=args.simulate_camera_input,
         )
         return 0
     except KeyboardInterrupt:

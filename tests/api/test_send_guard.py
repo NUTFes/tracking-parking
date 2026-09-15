@@ -9,6 +9,8 @@ system_countを壊さないようにするため）。3通りの組み合わせ�
 import sys
 from datetime import datetime
 
+import pytest
+
 from tracking_parking.api.runtime import ApiRuntime
 from tracking_parking.api.settings import ApiSettings
 
@@ -72,6 +74,37 @@ def test_無効時はrequestsを一度もimportしない(monkeypatch):
     monkeypatch.delitem(sys.modules, "requests", raising=False)
     ApiRuntime.create(make_settings(enabled=False), input_type="camera", execution_id="exec-1")
     assert "requests" not in sys.modules
+
+
+def test_simulate_camera_inputはファイル入力でも有効になる():
+    """--simulate-camera-input相当。カメラがまだ使えない段階で、動画の検知
+    結果が実際に送信コードへ届くこと（配線そのもの）を検証するための手段。
+    宛先がlocalhostなど安全な場合のみ、ファイル入力でも有効化される。"""
+    runtime = ApiRuntime.create(
+        make_settings(enabled=True), input_type="file", execution_id="exec-1", simulate_camera_input=True
+    )
+    assert runtime.enabled is True
+
+
+def test_simulate_camera_inputで非ローカル宛先はValueError():
+    """本番/stagingのsystem_countを動画の繰り返し検証で汚さないという
+    保証を、規約ではなくコードで強制する。逃げ道（override）は無い。"""
+    settings = make_settings(base_url="https://api.trapa.nutfes.net/api/v1")
+    with pytest.raises(ValueError, match="ローカル/LAN"):
+        ApiRuntime.create(settings, input_type="file", execution_id="exec-1", simulate_camera_input=True)
+
+
+def test_force_disabledがsimulate_camera_inputより優先される():
+    """--no-apiは「何があっても送らない」であるべきなので、
+    --simulate-camera-inputと同時指定でも送信は無効になる。"""
+    runtime = ApiRuntime.create(
+        make_settings(enabled=True),
+        input_type="file",
+        execution_id="exec-1",
+        force_disabled=True,
+        simulate_camera_input=True,
+    )
+    assert runtime.enabled is False
 
 
 def test_run_multi_videoはcameraオプションを渡さない(monkeypatch, tmp_path):
