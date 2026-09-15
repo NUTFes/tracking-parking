@@ -91,7 +91,9 @@ class ApiClient:
     def health(self) -> SendResult:
         """GET /health。認証不要。疎通確認用。"""
         try:
-            resp = self._session.get(self._url("/health"), timeout=self._settings.timeout)
+            resp = self._session.get(
+                self._url("/health"), timeout=self._settings.timeout, allow_redirects=False
+            )
         except Exception as exc:  # noqa: BLE001
             return SendResult(disposition=classify_exception(exc), error=str(exc))
         return self._result_from_response(resp)

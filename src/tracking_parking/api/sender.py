@@ -38,7 +38,7 @@ from typing import Callable, Protocol
 
 from tracking_parking.api import spool as spool_module
 from tracking_parking.api.client import EventPayload, SendResult
-from tracking_parking.api.failures import Disposition
+from tracking_parking.api.failures import Disposition, is_retryable
 
 logger = logging.getLogger(__name__)
 
@@ -245,13 +245,20 @@ class EventSender:
         self._spool_new(payload, disposition=result.disposition, error=result.error)
 
     def _send_with_retry(self, payload: EventPayload) -> SendResult:
+        """再送可否の判定はis_retryable()に委ねる（ここで独自に条件を書かない）。
+
+        将来request_idを送るのをやめる変更が入ったとき、is_retryable()の
+        docstringが警告している通りUNKNOWNをFalseへ戻す必要がある。判定を
+        ここへ重複させていると、is_retryable()だけ直しても実際の再送挙動が
+        変わらず、警告が意味を持たなくなる。
+        """
         result = self._client.post_event(payload)
-        if result.disposition in (Disposition.OK, Disposition.DROP):
+        if not is_retryable(result.disposition):
             return result
         for backoff in RETRY_BACKOFF_SEC:
             self._sleep(backoff)
             result = self._client.post_event(payload)
-            if result.disposition in (Disposition.OK, Disposition.DROP):
+            if not is_retryable(result.disposition):
                 return result
         return result
 

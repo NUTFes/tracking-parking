@@ -194,7 +194,8 @@ def main() -> int:
     parser.add_argument("--env", help=".envファイルのパス（既定: リポジトリルートの.env）")
     parser.add_argument(
         "--i-know-this-is-not-local", action="store_true", dest="override_guard",
-        help="API_BASE_URLがlocalhost/127.0.0.1以外でも実行を許可する（通常は使わない）",
+        help="API_BASE_URLがローカル/LAN（is_local_network_url()の判定範囲）以外でも"
+             "実行を許可する（通常は使わない）",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 

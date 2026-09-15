@@ -134,6 +134,16 @@ def test_healthは認証ヘッダーを付けない():
     assert kwargs.get("headers") is None
 
 
+def test_healthもallow_redirectsをFalseにする():
+    """post系3メソッドとの非対称の回帰テスト。付いていないとリダイレクトを
+    追ってしまい、疎通確認の結果が誤解を招く。"""
+    session = FakeSession(FakeResponse(status_code=200, json_body={"status": "ok"}))
+    client = ApiClient(make_settings(), session=session)
+    client.health()
+    _, _, kwargs = session.calls[0]
+    assert kwargs.get("allow_redirects") is False
+
+
 def test_例外は送らずにfailuresの分類へ委ねる():
     class RaisingSession:
         def post(self, *args, **kwargs):
