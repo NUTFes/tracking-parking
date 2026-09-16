@@ -1,4 +1,4 @@
-# API送信機能 ローカル検証手順
+# API送信機能 検証手順
 
 `src/tracking_parking/api/` の送信機能が、実物の
 [tracking-parking-api](https://github.com/NUTFes/tracking-parking-api) と
@@ -6,8 +6,9 @@
 フェイク相手に検証しており、ヘッダ名・URL・フィールド名・応答の形が実物と一致して
 いることは検証していない。ここでの検証はそのギャップを埋める。
 
-実施は [tracking-parking-center](https://github.com/NUTFes/tracking-parking-center)
-が提供するローカル開発スタック上で行う。本番環境には一切触れない。カメラ実機を
+**1〜8はローカル開発スタック**（[tracking-parking-center](https://github.com/NUTFes/tracking-parking-center)）
+上で行い、本番環境には触れない。**9だけが本番を対象**とする（`request_id` の
+べき等は、受信側が本番へデプロイされるまで確定しないため）。カメラ実機を
 使った通し確認（Jetson設置時）は対象外。
 
 ## 前提
@@ -68,8 +69,11 @@ uv run python scripts/check_api_connection.py heartbeat
 uv run python scripts/check_api_connection.py sender --count 5
 ```
 
-`API_BASE_URL` のホストが `localhost` / `127.0.0.1` 以外を指しているときは安全のため
-実行を拒否する（`--i-know-this-is-not-local` で解除可能。通常は使わない）。
+`API_BASE_URL` がローカル/LAN以外を指しているときは安全のため実行を拒否する
+（`--i-know-this-is-not-local` で解除可能。本番を対象にする第9節でのみ使う）。
+判定は `is_local_network_url()`（`src/tracking_parking/api/settings.py`）で、
+`localhost` / `*.local` / ドットを含まない裸のホスト名 / プライベートIP を
+ローカル扱いにする。エッジ機からLAN上の開発機スタックを指す場合も通る。
 
 ## 4. 契約の確認
 
@@ -224,7 +228,7 @@ uv run python scripts/run_detection.py \
 
 ```bash
 # 非ローカル宛先では起動を拒否する（YOLOの重み読み込み前に即終了、逃げ道なし）
-API_ENABLED=true API_BASE_URL=https://api.trapa.nutfes.net/api/v1 DEVICE_API_KEY=x \
+API_ENABLED=true API_BASE_URL=https://api-trapa.nutfes.net/api/v1 DEVICE_API_KEY=x \
 uv run python scripts/run_detection.py \
   --input data/inputs/1787014266.421887.mp4 --env newcam.env --simulate-camera-input
 
@@ -235,3 +239,110 @@ uv run python scripts/run_detection.py \
 これが通れば、送信経路そのものの検証はローカルで完結する。エッジ機での実機
 検証（第6層・カメラ実機）は、画角・Issue #103（Jetson Orin NXでのGUI起動）・
 実機負荷といったカメラ固有の問題だけにスコープが絞られる。
+
+## 9. 本番での確認（`request_id` のべき等）
+
+1〜8はローカル開発スタック（`tracking-parking-center`）相手の検証で、送信経路そのものは
+これで確認しきれる。だが **ADR 0002 が挙げていた「べき等が実際に効いているか」は、
+受信側が本番へデプロイされるまで確定しなかった**。`EventCreate` に `model_config` が
+無く Pydantic の既定 `extra="ignore"` が効くため、受信側が未対応のうちは `request_id`
+を送っても黙って無視され、二重計上が起きて初めて発覚するという穴があったため。
+
+2026-09-16 に本番（`api-trapa.nutfes.net`）で確認し、決着した。
+
+### 本番の接続先
+
+ドメインはハイフン区切りである点に注意（`api.trapa...` ではない）。
+
+| 用途 | ホスト |
+|---|---|
+| API | `api-trapa.nutfes.net` |
+| 公開ビューア | `app-trapa.nutfes.net` |
+| manager | `manager-trapa.nutfes.net` |
+| admin | `admin-trapa.nutfes.net` |
+
+### なぜ本番へ送っても安全か
+
+`parking_lots` のカウントは役割が分かれている（`app/models/parking_lot.py`）。
+
+| カラム | 更新する主体 | 公開ビューアでの表示 |
+|---|---|---|
+| `current_count` | manager の手動増減 / admin のリセットのみ | **表示される** |
+| `system_count` | デバイスのイベント | 表示されない（manager画面で比較用に併記） |
+
+**デバイスのイベントは `current_count` を動かさない。** `tracking-parking-web` は
+`current_count` しか読まないため、検証中も一般利用者が見る画面は変化しない。
+
+### 設定
+
+APIキーはコマンドラインに書かず、Git管理外の `production.env` に置く。
+
+**ファイル名に注意。** `.gitignore` のパターンは `*.env`（末尾が `.env`）と `.env`
+だけなので、`.env.production` という名前は**どちらにも一致せず追跡対象になり、
+本番APIキーがコミットされる**。`newcam.env` / `img2787.env` と同じ `<名前>.env`
+の形にすること。
+
+```
+API_ENABLED=true
+API_BASE_URL=https://api-trapa.nutfes.net/api/v1
+DEVICE_API_KEY=<admin-webでデバイス登録時に一度だけ表示される平文キー>
+API_CONNECT_TIMEOUT_SEC=5.0
+API_READ_TIMEOUT_SEC=10.0
+```
+
+タイムアウトを既定（3秒/5秒）より伸ばしているのは、Cloudflare Tunnel 経由で往復が
+長く、実際には届いているのに `ReadTimeout` → UNKNOWN と分類されるのを避けるため。
+
+デバイスは admin-web から登録する。平文キーは**登録時の1回しか表示されず再取得
+できない**（サーバーはSHA-256ハッシュしか保存しない。キー再発行のエンドポイントも無い）。
+
+### 手順
+
+`--i-know-this-is-not-local` は `is_local_network_url()` の判定を解除する。
+`run_detection.py` の `--simulate-camera-input` にこの逃げ道は**無い**（本番へ
+動画の繰り返し検証を流し込めてしまうため）。
+
+```bash
+# 送信前の system_count を記録
+curl -s https://api-trapa.nutfes.net/api/v1/parking-lots | jq
+
+uv run python scripts/check_api_connection.py --env production.env \
+  --i-know-this-is-not-local health
+
+# request_id は毎回新規
+uv run python scripts/check_api_connection.py --env production.env \
+  --i-know-this-is-not-local event --track-id "VERIFY-20260916"
+
+# 本命：同じ request_id で2回送る
+uv run python scripts/check_api_connection.py --env production.env \
+  --i-know-this-is-not-local idempotency --track-id "VERIFY-20260916"
+```
+
+`--track-id` の値は `vehicle_track_id`（自由文字列）に入るので検証データの識別子に
+なる。`request_id` は UUID 型なのでマーカーを埋められない。
+
+### 確認項目
+
+**3回 POST して `request_id` は2種類**なので、`system_count` は **2** で止まる。
+
+| 項目 | 期待値 | 2026-09-16 の結果 |
+|---|---|---|
+| `system_count` の変化 | +2（3回POSTしたが重複分が弾かれる） | 0 → 2 ✓ |
+| `idempotency` 2回の応答の `id` | 一致 | 両方 `id=2` ✓ |
+| 応答の `request_id` | 送った値が返る（無視されていない証拠） | 一致 ✓ |
+| `current_count` | 変化しない | 0 のまま ✓ |
+| 他の駐車場 | 変化しない | 全て 0 のまま ✓ |
+
+反映はバックグラウンド処理なので即座ではない。sweep 間隔30秒・stale 判定60秒のため
+上限90秒まで待つ。**遅れて +1 されないこと**も確認する（今回は65秒追加で待って 2 のまま）。
+
+`system_count` が 3 になったらべき等が効いていない。追加の送信を止めて原因を切り分ける。
+
+### 後片付け
+
+admin-web で対象駐車場の `system_count` を 0 へリセットする（`target: system`）。
+
+検証デバイスは**削除しない**運用にしている（今後も使うため）。そのため
+`parking_events` の検証行も残るが、`vehicle_track_id` が `VERIFY-` で始まる行として
+後から識別できる。デバイスを削除すれば `parking_events` と `device_commands` は
+CASCADE で消えるが、`parking_activities` は `parking_lots.id` に紐づくので残る。
