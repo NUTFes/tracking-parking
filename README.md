@@ -44,6 +44,26 @@ uv run python scripts/run_multi_video.py
 
 結果は `data/outputs/` に出る（アノテーション動画、イベントログのJSON/CSV、run manifest）。
 
+## API送信
+
+カメラ入力かつ `.env` の `API_ENABLED=true` のとき、検出した入出庫を
+[tracking-parking-api](https://github.com/NUTFes/tracking-parking-api) へ
+リアルタイムに送信する。動画ファイル入力では、設定に関わらず常に送信しない
+（検証の再実行が本番の駐車台数を壊さないための安全策）。
+
+```bash
+uv run python scripts/run_detection.py --camera 0
+uv run python scripts/run_detection.py --camera 0 --no-api  # .envを書き換えずに送信だけ止める
+```
+
+設定キーの一覧は `.env.template` を参照。詳細（失敗時の再送方針、集計開始/停止コマンドの扱いなど）は
+[docs/decisions/0002-api-event-delivery.md](docs/decisions/0002-api-event-delivery.md) と
+[docs/two-line-system.md](docs/two-line-system.md#api送信設定) を参照。
+
+実物のAPI相手にローカルで疎通確認する手順は
+[docs/api-verification.md](docs/api-verification.md) を参照
+（`scripts/check_api_connection.py` を使う。本番環境には触れない）。
+
 ## テスト
 
 ```bash
@@ -69,5 +89,6 @@ uv run pytest -q
 
 - [docs/two-line-system.md](docs/two-line-system.md) — システム構成、設定パラメータ、アルゴリズム
 - [docs/verification.md](docs/verification.md) — 実動画1本での検証手順
+- [docs/api-verification.md](docs/api-verification.md) — API送信機能のローカル疎通確認手順
 - [docs/wandb_integration_spec_v2.md](docs/wandb_integration_spec_v2.md) — 実験記録（W&B連携）の仕様
 - [docs/decisions/](docs/decisions/) — 設計上の決定記録

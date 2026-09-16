@@ -1517,9 +1517,11 @@ dependencies = [
     { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14'" },
     { name = "pandas", version = "3.0.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14'" },
     { name = "python-dotenv" },
+    { name = "requests" },
     { name = "torch" },
     { name = "torchvision" },
     { name = "ultralytics" },
+    { name = "urllib3" },
     { name = "wandb" },
 ]
 
@@ -1535,9 +1537,11 @@ requires-dist = [
     { name = "opencv-python", specifier = ">=4.8.1" },
     { name = "pandas", specifier = ">=2.2.1" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
+    { name = "requests", specifier = ">=2.32.0" },
     { name = "torch", specifier = ">=2.2.2" },
     { name = "torchvision", specifier = ">=0.17.2" },
     { name = "ultralytics", specifier = "==8.4.72" },
+    { name = "urllib3", specifier = ">=2.0.0" },
     { name = "wandb", specifier = ">=0.28.0" },
 ]
 

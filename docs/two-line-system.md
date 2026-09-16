@@ -314,6 +314,31 @@ SAVE_LOGS=true            # ログを保存
 SHOW_DISPLAY=false        # リアルタイム表示
 ```
 
+### API送信設定
+
+```bash
+API_ENABLED=false                                    # カメラ入力かつtrueのときだけ送信する
+API_BASE_URL=                                        # 例: http://localhost:8000/api/v1
+DEVICE_API_KEY=                                       # デバイス登録時に一度だけ返る平文キー
+API_CONNECT_TIMEOUT_SEC=3.0                          # 接続確立の待ち時間
+API_READ_TIMEOUT_SEC=5.0                             # 応答の待ち時間
+HEARTBEAT_INTERVAL_SEC=30                            # サーバーのオフライン判定(既定120秒)の4分の1
+SHUTDOWN_FLUSH_SEC=10                                # 終了時にキューが空になるのを待つ上限(秒)
+SPOOL_PATH=data/outputs/unsent_events.jsonl          # 送れなかったイベントの置き場所(相対パスはHOME_DIR基準)
+```
+
+カメラ入力かつ `API_ENABLED=true` のときだけ、入出庫イベントと集計開始/停止コマンドの
+往復（ハートビート）を行う。動画ファイル入力では常に送信しない。`--no-api` を付けると
+`.env` を書き換えずに送信だけを無効化できる（実機デバッグ用。逆向きの「ファイル入力でも
+強制送信する」オプションは安全性の理由から提供しない）。
+
+送信するイベントには `request_id`（ローカルの `event_id`、UUID）を必ず含める。サーバー側は
+同じ `request_id` の2回目を既存イベントとして扱い `system_count` を動かさないため、
+接続タイムアウトや応答不明などの失敗はすべて安全に再送できる。`POST /events` は
+イベントの永続化と同時に **202 Accepted** を返し、`system_count` への反映は
+サーバー側のバックグラウンド処理に回る（同期的には反映されない）。設計の詳細は
+[docs/decisions/0002-api-event-delivery.md](decisions/0002-api-event-delivery.md) を参照。
+
 ## アルゴリズム
 
 ### 外積法によるライン交差検知

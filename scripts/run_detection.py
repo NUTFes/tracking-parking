@@ -12,6 +12,7 @@ import os
 import platform
 import sys
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from ultralytics import YOLO
 
@@ -54,6 +55,8 @@ from tracking_parking.common.ground_truth import (
     build_ground_truth_summary,
     load_ground_truth,
 )
+from tracking_parking.api.runtime import ApiRuntime
+from tracking_parking.api.settings import ApiSettings, is_local_network_url
 
 
 WEBCAM_FPS = 30.0
@@ -148,6 +151,8 @@ def process_video(
     device_name: str = platform.node(),
     runtime: RuntimeSettings | None = None,
     ground_truth: GroundTruth | None = None,
+    no_api: bool = False,
+    simulate_camera_input: bool = False,
 ):
     """
     動画を処理
@@ -321,12 +326,32 @@ def process_video(
     prev_count_out = 0
     synchronize_model = model_synchronizer(model, runtime.yolo_device)
     exit_code = 0
+    # try:の外で例外が出るとfinallyのapi.shutdown()がNameErrorになるため、
+    # ApiRuntime.create()より先にNoneで初期化しておく。
+    api: ApiRuntime | None = None
 
     try:
+        # API送信ランタイムを組み立てる。送信ガード（カメラ入力 かつ
+        # API_ENABLED=true）はApiRuntime.create()の内部で判定する。動画
+        # ファイル入力では常に無効になる。DEVICE_API_KEY未設定などで
+        # settings.validate()がValueErrorを出す場合があるため、try:の中で
+        # 行う（外だとcap.release()等の後片付けがfinallyで飛ばされる）。
+        api = ApiRuntime.create(
+            ApiSettings.from_env(home_dir=config.home_dir),
+            input_type=input_type,
+            execution_id=run_config["execution_id"],
+            force_disabled=no_api,
+            simulate_camera_input=simulate_camera_input,
+        )
+        api.start()
+
         while cap.isOpened():
             with elapsed_timer() as end_to_end_timer:
                 with elapsed_timer() as read_timer:
                     ret, frame = cap.read()
+                # API送信の有無に関わらず無条件で取得する。api.enabledで分岐すると
+                # 有効run/無効runでend_to_end_msの測り方が変わり、run間の比較可能性が崩れる。
+                frame_read_at = datetime.now().astimezone()
                 if not ret:
                     break
 
@@ -403,6 +428,7 @@ def process_video(
                 with elapsed_timer() as output_timer:
                     for event in pending_events:
                         event_id = event_logger.record_event(**event)
+                        event["event_id"] = event_id
                         state = tracker.get_state(event["track_id"])
                         if state is not None:
                             state.pending_event_id = event_id
@@ -484,6 +510,13 @@ def process_video(
                 print(
                     f"[Frame {frame_id}] ID:{event['track_id']} "
                     f"{event['event_type']} (信頼度: {event['confidence']})"
+                )
+                # confidenceの確定を待たずに送る（high/normalを区別せず全件送信する方針）。
+                api.enqueue_event(
+                    event_id=event["event_id"],
+                    event_type=event["event_type"],
+                    detected_at=frame_read_at,
+                    track_id=event["track_id"],
                 )
 
             frame_id += 1
@@ -576,6 +609,8 @@ def process_video(
             out.release()
         if config.show_display:
             cv2.destroyAllWindows()
+        if api is not None:
+            api.shutdown()
         wandb_logger.finish(exit_code=exit_code)
 
 
@@ -614,6 +649,17 @@ def main():
         help="W&Bへ速度・台数メトリクスを記録"
     )
     parser.add_argument(
+        "--no-api",
+        action="store_true",
+        help=".envのAPI_ENABLEDに関わらず、API送信だけを無効化する（実機デバッグ用）"
+    )
+    parser.add_argument(
+        "--simulate-camera-input",
+        action="store_true",
+        help="動画ファイル入力をカメラ入力とみなしてAPI送信を有効化する（送信経路の検証用。"
+             "API_BASE_URLがローカル/LAN以外のときは起動を拒否する。解除する手段は無い）"
+    )
+    parser.add_argument(
         "--device-name",
         default=None,
         help="比較対象デバイス名"
@@ -636,6 +682,10 @@ def main():
         print("\n使用例:")
         print("  python scripts/run_detection.py --input data/inputs/test.mp4")
         print("  python scripts/run_detection.py --camera 0 --display")
+        return 1
+
+    if args.simulate_camera_input and args.camera is not None:
+        print("エラー: --simulate-camera-inputはカメラ入力（--camera）には不要です")
         return 1
 
     # 入力ソースを決定
@@ -672,6 +722,20 @@ def main():
         print(f"設定エラー: {e}")
         return 1
 
+    # --simulate-camera-inputの宛先チェックをここで先に行う（fail fast）。
+    # ApiRuntime.create()内でも同じ判定を行う（権威的なチェック）が、ここで
+    # 弾いておけばYOLOモデルの読み込み前に終了でき、実機でのデバッグ体験が良い。
+    if args.simulate_camera_input:
+        api_settings = ApiSettings.from_env(home_dir=config.home_dir)
+        if not is_local_network_url(api_settings.base_url):
+            print(
+                f"エラー: --simulate-camera-inputはAPI_BASE_URLがローカル/LAN以外のときは"
+                f"使えません: {api_settings.base_url}\n"
+                "動画をカメラ扱いにする検証は、本番/stagingのsystem_countを"
+                "誤って動かさないためローカル/LAN限定です。"
+            )
+            return 1
+
     # 動画を処理
     try:
         runtime = RuntimeSettings.from_env()
@@ -683,6 +747,8 @@ def main():
             device_name=args.device_name or os.getenv("EXP_DEVICE_NAME", platform.node()),
             runtime=runtime,
             ground_truth=ground_truth,
+            no_api=args.no_api,
+            simulate_camera_input=args.simulate_camera_input,
         )
         return 0
     except KeyboardInterrupt:
