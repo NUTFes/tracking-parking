@@ -3,7 +3,7 @@ name = "tracking-parking"
 version = "0.1.0"
 description = "2ライン方式による駐車場の入出庫検知"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.10"
 dependencies = [
     # YOLOv8とトラッキング
     "ultralytics==8.4.72",

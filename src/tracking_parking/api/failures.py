@@ -12,7 +12,19 @@ import しただけではrequestsが読み込まれないようにするため�
 遅延import方針、common/wandb_logger.pyのExperimentLoggerと同じ考え方）。
 """
 
-from enum import StrEnum
+import sys
+from enum import Enum
+
+if sys.version_info >= (3, 11):
+    from enum import StrEnum
+else:
+    # JetPack 6.x の標準Pythonは3.10で、StrEnumが無い。
+    # 素朴に `class Disposition(str, Enum)` とすると str(Disposition.RETRY) が
+    # 'Disposition.RETRY' になり、sender.py が str(disposition) でスプールへ
+    # 書く値が静かに壊れる。__str__ を明示して3.11+のStrEnumと同じ挙動にする。
+    class StrEnum(str, Enum):  # type: ignore[no-redef]
+        def __str__(self) -> str:
+            return str(self.value)
 
 
 class Disposition(StrEnum):

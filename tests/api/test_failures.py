@@ -118,3 +118,17 @@ def test_is_retryableはRETRYとUNKNOWNをどちらもTrueにする():
 def test_is_retryableのdocstringにrequest_idへの依存が明記されている():
     """将来request_idを送るのをやめる変更が入ったとき、ここを読んで危険に気づけるように。"""
     assert "request_id" in is_retryable.__doc__
+
+
+def test_disposition_str_is_plain_value():
+    """str(Disposition.X) が値そのものになること。
+
+    sender.py が str(disposition) の結果をスプールのJSONLへ書くため、
+    ここが 'Disposition.RETRY' のような表現に変わるとスプールが静かに壊れる。
+    Python 3.10 では StrEnum が無く互換実装に落ちるので、その挙動を固定する。
+    """
+    assert str(Disposition.OK) == "ok"
+    assert str(Disposition.RETRY) == "retry"
+    assert str(Disposition.UNKNOWN) == "unknown"
+    assert str(Disposition.DROP) == "drop"
+    assert f"{Disposition.RETRY}" == "retry"
