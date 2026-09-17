@@ -122,11 +122,15 @@ RETRYとUNKNOWNは再送の可否としては同じ扱いだが、分類自体�
 
 ## 残っている課題
 
-- 受信側APIへの `request_id` カラム追加・unique制約・重複時の応答契約は実装・
-  マージ済み（`tracking-parking-api` の `parking_events.request_id`、unique index
-  `ix_parking_events_request_id`）。べき等が実際に効くことは、ローカル開発スタック
-  （`tracking-parking-center`）上で同じ `request_id` を2回送り、`parking_events.status`
-  が `processed` になった後に `system_count` が1しか動かないことを確認済み。
-- 受信側のDBスキーマ変更を伴うため、本番環境への反映は通常のデプロイ手順とは別に、
-  インフラ担当との調整（マイグレーションの適用・ロールバック計画）が必要になる。
-  ローカル検証はあくまで開発スタック上の確認であり、本番DBへの反映はこの限りではない。
+- ~~受信側APIへの `request_id` 対応とべき等の実効性~~ → **2026-09-16 に本番で確認済み。**
+  `tracking-parking-api` の `parking_events.request_id` と unique index
+  `ix_parking_events_request_id` は実装・マージ済みで、本番（`api-trapa.nutfes.net`）
+  にもデプロイ済み。本番で `POST /events` を3回（うち2回は同じ `request_id`）送り、
+  `system_count` が **2 しか動かない**ことを確認した。詳細は
+  [../api-verification.md](../api-verification.md) の「本番での確認」を参照。
+- ~~受信側のDBスキーマ変更を伴うため、本番環境への反映にインフラ担当との調整が必要~~
+  → **反映済み。** 本番の api コンテナは起動コマンドに `alembic upgrade head` を
+  含むため、API のデプロイ時点でマイグレーションが適用される。
+
+この決定の前提だった「`request_id` があるので UNKNOWN も再送してよい」
+（`is_retryable()`）は、本番の実挙動として裏付けが取れた状態になった。

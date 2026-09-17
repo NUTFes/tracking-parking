@@ -24,7 +24,7 @@ def is_local_network_url(base_url: str) -> bool:
         - ドットを含まない裸のホスト名（LAN上のマシン名やDockerサービス名）
         - プライベートIP（192.168.*/10.*/172.16-31.*、127.0.0.1を含む）
 
-    api.trapa.nutfes.net のような実FQDNは上のいずれにも該当せずFalseになる。
+    api-trapa.nutfes.net のような実FQDNは上のいずれにも該当せずFalseになる。
 
     DNS解決は行わない。名前解決の失敗や遅延に安全判定を依存させると、
     ネットワークが不調なときに「判定できないので通す」か「正しい宛先なのに
