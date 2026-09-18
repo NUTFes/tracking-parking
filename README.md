@@ -11,13 +11,41 @@
 
 ## セットアップ
 
+### 開発機（macOS / Linux、GPUを使わない）
+
 ```bash
 uv sync
 ```
 
 `src/tracking_parking` がeditable installされ、`import tracking_parking` が使えるようになる。
 
-続いて設定ファイルとモデル重み、入力動画を用意する。いずれもGit管理外。
+### エッジ機（Jetson Orin NX / JetPack 6.x）
+
+**`uv sync` と `uv run` を使ってはいけない。** どちらも暗黙に `.venv` を uv 管理の
+Pythonで作り直し、torchをPyPIの汎用ビルドへ置き換える。JetPackのCUDAドライバ(12.6)
+では初期化できず、`torch.cuda.is_available()` が `False` になって
+`ValueError: Invalid CUDA 'device=0' requested` で止まる。
+
+GPU実行に必要な torch / torchvision / OpenCV / ultralytics は**システムPython 3.10側**に
+入っているため、`.venv` はそれを借りる形で作る。
+
+```bash
+uv venv --python 3.10 --system-site-packages
+uv pip install --python .venv/bin/python "python-dotenv>=1.0.0" "pandas>=2.2.1" \
+  "scipy>=1.13" "requests>=2.32.0" "urllib3>=2.0.0" tqdm pytest wandb
+uv pip install --python .venv/bin/python --no-deps -e .
+```
+
+以降はすべて `.venv/bin/python` を直接呼ぶ。
+
+```bash
+.venv/bin/python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
+# → 2.11.0 True   （Falseなら上の手順をやり直す）
+```
+
+### 共通
+
+設定ファイルとモデル重み、入力動画を用意する。いずれもGit管理外。
 
 ```bash
 cp .env.template .env          # HOME_DIR と MODEL_PATH を環境に合わせる
@@ -26,9 +54,12 @@ mkdir -p models data/inputs    # models/ に .pt を、data/inputs/ に動画を
 
 ## 使い方
 
+エッジ機では `uv run python` を `.venv/bin/python` に読み替える（理由は上のセットアップ参照）。
+
 ```bash
-# 1. GUIでライン座標を設定する（動画の先頭フレームに5点クリック）
+# 1. GUIでライン座標を設定する（先頭フレームに5点クリック）
 uv run python scripts/setup_lines.py --video data/inputs/test.mp4
+uv run python scripts/setup_lines.py --camera 0     # 設置カメラの画角で直接設定する
 
 # 2. 動画を処理して入出庫をカウントする
 uv run python scripts/run_detection.py --input data/inputs/test.mp4
@@ -43,6 +74,33 @@ uv run python scripts/run_multi_video.py
 ```
 
 結果は `data/outputs/` に出る（アノテーション動画、イベントログのJSON/CSV、run manifest）。
+
+**ライン座標は設定したときの画角に紐づく。** カメラ入力では実行時の解像度が
+それと違うと検知位置がずれるため、`.env` の `CAMERA_WIDTH` / `CAMERA_HEIGHT` /
+`CAMERA_FOURCC` を明示すること（未設定だとデバイス既定で開く）。`setup_lines.py`
+も同じ設定でフレームを掴むので、両者は自動的に揃う。
+
+## 録画（事後分析用）
+
+`SAVE_VIDEO=true` でアノテーション動画を保存する。ライン・車両代表点・track_ID・
+カウント数に加えて、各フレームへ**日本時刻**を焼き込む（イベント記録の
+`detected_at` と同じ値なので、動画の位置とイベントを突き合わせられる）。
+
+```
+data/outputs/videos/
+  camera_20260918_143000/        # カメラ入力: 実行開始時刻のディレクトリへ分割して書く
+      segment_00000.mp4
+      segment_00001.mp4
+  annotated_<入力名>.mp4          # 動画ファイル入力: 単一ファイル
+```
+
+カメラ入力を分割するのは、mp4のインデックス(moov atom)が終了時に書かれるため、
+分割しないままプロセスが落ちると**それまでの全録画が再生不能になる**ため。
+分割しておけば失うのは書きかけの1本だけで済む。閾値は `VIDEO_SEGMENT_MB`。
+
+JetsonではNVENC（ハードウェアエンコーダ）を使う。1280x720で書き込みが
+約5.3ms/フレームで、CPU(mp4v)の約11.6msより検知ループのフレーム予算を食わない。
+`VIDEO_ENCODER=auto` なら使える環境で自動的に選ばれる。
 
 ## API送信
 
@@ -67,7 +125,8 @@ uv run python scripts/run_detection.py --camera 0 --no-api  # .envを書き換�
 ## テスト
 
 ```bash
-uv run pytest -q
+uv run pytest -q          # 開発機
+.venv/bin/python -m pytest -q   # エッジ機
 ```
 
 ## ディレクトリ構成
