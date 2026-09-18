@@ -10,6 +10,7 @@ import argparse
 import math
 import os
 import platform
+import shutil
 import sys
 import time
 from dataclasses import dataclass
@@ -23,7 +24,7 @@ from tracking_parking.config import Config
 from tracking_parking.detection.line_crossing import LineCrossingDetector, get_vehicle_point
 from tracking_parking.detection.tracker import VehicleTracker
 from tracking_parking.output.video_writer import VideoAnnotator
-from tracking_parking.output.video_recorder import open_recorder
+from tracking_parking.output.video_recorder import SEGMENT_PATTERN, open_recorder
 from tracking_parking.output.event_logger import EventLogger
 from tracking_parking.common.camera import apply_camera_capture_settings as apply_capture_settings
 from tracking_parking.common.frame_stats import compute_timing_stats
@@ -89,6 +90,46 @@ def compute_stream_time_sec(
     if is_camera_input:
         return elapsed_sec
     return frame_id / fps if fps > 0 else 0.0
+
+
+def build_recording_target(output_dir: str, video_path, *, segment_mb: int,
+                           started_at: datetime) -> tuple:
+    """録画の出力先と1本あたりの上限バイト数を決める。
+
+    カメラ入力は実行開始時刻のディレクトリへ分割して書く。以前は
+    'annotated_camera.mp4' の固定名で、起動するたびに前回の録画を上書きして
+    いた。本番で録り続ける用途では、これは黙って証跡を失う。
+
+    動画ファイル入力は従来どおり単一ファイルにする。入力が有限で、名前が
+    入力に紐づいているほうが扱いやすく、分割の動機（落ちたときに失う範囲を
+    限る）も当てはまらないため。
+
+    Args:
+        output_dir: 出力ディレクトリ
+        video_path: 入力（strなら動画ファイル、intならカメラID）
+        segment_mb: 1本あたりの上限(MB)。0で分割しない。
+        started_at: 実行開始時刻。カメラ入力のディレクトリ名に使う。
+
+    Returns:
+        (出力パス, 1本あたりの上限バイト数)。分割しないときは上限0。
+    """
+    videos_dir = os.path.join(output_dir, "videos")
+
+    if isinstance(video_path, str):
+        os.makedirs(videos_dir, exist_ok=True)
+        return os.path.join(videos_dir, f"annotated_{Path(video_path).name}"), 0
+
+    if segment_mb <= 0:
+        # 分割しない指定でも、固定名による上書きは避ける。
+        os.makedirs(videos_dir, exist_ok=True)
+        stamp = started_at.strftime("%Y%m%d_%H%M%S")
+        return os.path.join(videos_dir, f"annotated_camera_{stamp}.mp4"), 0
+
+    run_dir = os.path.join(
+        videos_dir, f"camera_{started_at.strftime('%Y%m%d_%H%M%S')}"
+    )
+    os.makedirs(run_dir, exist_ok=True)
+    return os.path.join(run_dir, SEGMENT_PATTERN), segment_mb * 1024 * 1024
 
 
 def apply_camera_capture_settings(cap, config: Config) -> None:
@@ -303,11 +344,11 @@ def process_video(
     out = None
     output_video_path = None
     if config.save_video:
-        os.makedirs(os.path.join(output_dir, "videos"), exist_ok=True)
-        output_video_path = os.path.join(
+        output_video_path, segment_bytes = build_recording_target(
             output_dir,
-            "videos",
-            f"annotated_{Path(str(video_path)).name if isinstance(video_path, str) else 'camera.mp4'}"
+            video_path,
+            segment_mb=config.video_segment_mb,
+            started_at=datetime.now().astimezone(),
         )
         # ここはtry:の外なので、例外が出るとfinallyのcap.release()が飛ぶ。
         # VIDEO_ENCODER=nvencを指定したが使えない場合にValueErrorが出るため、
@@ -317,11 +358,27 @@ def process_video(
                 output_video_path,
                 width=width, height=height, fps=fps,
                 encoder=config.video_encoder,
+                segment_bytes=segment_bytes,
+                max_segments=config.video_max_segments,
             )
         except Exception:
             cap.release()
             raise
         print(f"✓ 出力動画: {output_video_path} (encoder={out.name})")
+        if segment_bytes:
+            free_gb = shutil.disk_usage(os.path.dirname(output_video_path)).free / 1024**3
+            keep = (f"最大{config.video_max_segments}本"
+                    if config.video_max_segments else "本数制限なし")
+            print(f"  分割: {config.video_segment_mb}MBごと / {keep} / 空き{free_gb:.1f}GB")
+            if config.video_max_segments:
+                # 保持数を有効にするとファイル名が循環する（splitmuxsinkの
+                # max-filesがリングバッファ）。名前の順に読むと時系列を誤る。
+                print("  [注意] 保持数を有効にしたためファイル名は循環します。"
+                      "時系列はmtimeか焼き込んだJSTで判断してください")
+                need_gb = (config.video_segment_mb * config.video_max_segments) / 1024
+                if need_gb > free_gb:
+                    print(f"  [WARN] 保持数ぶんの容量が足りません: "
+                          f"必要{need_gb:.1f}GB > 空き{free_gb:.1f}GB")
 
     print("\n処理開始...\n")
 
@@ -376,6 +433,8 @@ def process_video(
         # 解決先が変わり（NVENCの有無）、output_msが変わるため。
         "video_encoder_requested": config.video_encoder,
         "video_encoder": out.name if out is not None else None,
+        "video_segment_mb": config.video_segment_mb,
+        "video_max_segments": config.video_max_segments,
         "save_logs": config.save_logs,
         "show_display": config.show_display,
         "timing_schema_version": TIMING_SCHEMA_VERSION,

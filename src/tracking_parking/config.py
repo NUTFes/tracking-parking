@@ -131,6 +131,15 @@ class Config:
     # cv2.VideoWriter(mp4v)のCPUエンコードは1280x720で約11.6ms/フレーム掛かり、
     # NVENCなら約5.3msで済む（検知ループのフレーム予算に直接効く）。
     video_encoder: str
+    # 録画を何MBごとに分けるか。0で分割しない。
+    # 分割の目的は、mp4のインデックス(moov atom)が終了時に書かれるため、
+    # 途中でプロセスが落ちるとそれまでの全録画が再生不能になるのを防ぐこと。
+    # 時間ではなくサイズを基準にしているのは、書き出しfpsが実効fpsと一致せず
+    # 時間指定が実時間とずれるのに対し、バイト数はずれないため。
+    video_segment_mb: int
+    # 残すセグメント数。0で無制限（古いものを消さない）。既定を無制限に
+    # しているのは、事後分析用の証跡を黙って消さないため。
+    video_max_segments: int
 
     # カメラ入力の要求解像度（動画ファイル入力では使わない）
     # 指定しないとデバイス既定で開く。Logitech C270は既定が640x480で、
@@ -240,6 +249,8 @@ class Config:
         save_logs = os.getenv("SAVE_LOGS", "true").lower() == "true"
         show_display = os.getenv("SHOW_DISPLAY", "false").lower() == "true"
         video_encoder = os.getenv("VIDEO_ENCODER", "auto").lower()
+        video_segment_mb = int(os.getenv("VIDEO_SEGMENT_MB", "256"))
+        video_max_segments = int(os.getenv("VIDEO_MAX_SEGMENTS", "0"))
 
         # カメラ入力の解像度。setup_lines.py と同じパーサを通す。
         camera = CameraCaptureSettings.from_env(env_path)
@@ -262,6 +273,8 @@ class Config:
             save_logs=save_logs,
             show_display=show_display,
             video_encoder=video_encoder,
+            video_segment_mb=video_segment_mb,
+            video_max_segments=video_max_segments,
             camera_width=camera.width,
             camera_height=camera.height,
             camera_fourcc=camera.fourcc
@@ -311,6 +324,11 @@ class Config:
                 f"VIDEO_ENCODERは{'/'.join(ENCODER_CHOICES)}のいずれかです: "
                 f"{self.video_encoder!r}"
             )
+
+        for name, value in (("VIDEO_SEGMENT_MB", self.video_segment_mb),
+                            ("VIDEO_MAX_SEGMENTS", self.video_max_segments)):
+            if value < 0:
+                errors.append(f"{name}は0以上である必要があります: {value}")
 
         # 処理方式のチェック
         if self.method != "hybrid":
