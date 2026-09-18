@@ -5,8 +5,23 @@
 
 import os
 from dataclasses import dataclass
-from typing import Tuple
+from typing import Optional, Tuple
 from dotenv import load_dotenv
+
+
+def _optional_int_env(name: str) -> Optional[int]:
+    """未設定ならNone、設定されていればintで返す。
+
+    空文字はNone扱いにする（.envでキーだけ残して値を消した状態を、
+    「既定に任せる」という指定として読む）。
+    """
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        raise ValueError(f"{name} は整数で指定してください: {raw!r}")
 
 
 @dataclass
@@ -55,6 +70,16 @@ class Config:
     save_video: bool
     save_logs: bool
     show_display: bool
+
+    # カメラ入力の要求解像度（動画ファイル入力では使わない）
+    # 指定しないとデバイス既定で開く。Logitech C270は既定が640x480で、
+    # 1280x720を出せるのに使われない。ライン座標を別解像度のクリップで
+    # 設定していると座標が全てずれるため、実機では明示指定が要る。
+    camera_width: Optional[int]
+    camera_height: Optional[int]
+    # FOURCCを分けているのは、解像度だけ指定しても通らない組み合わせがあるため。
+    # C270のYUYVは640x480までで、1280x720はMJPGでしか出ない。
+    camera_fourcc: Optional[str]
 
     @classmethod
     def from_env(cls, env_path: str = None):
@@ -154,6 +179,12 @@ class Config:
         save_logs = os.getenv("SAVE_LOGS", "true").lower() == "true"
         show_display = os.getenv("SHOW_DISPLAY", "false").lower() == "true"
 
+        # カメラ入力の解像度。未設定はNoneのまま渡し、デバイス既定を使う意思と
+        # 区別できるようにする（0やデフォルト値で埋めない）。
+        camera_width = _optional_int_env("CAMERA_WIDTH")
+        camera_height = _optional_int_env("CAMERA_HEIGHT")
+        camera_fourcc = os.getenv("CAMERA_FOURCC") or None
+
         return cls(
             home_dir=home_dir,
             model_path=model_path,
@@ -170,7 +201,10 @@ class Config:
             method=method,
             save_video=save_video,
             save_logs=save_logs,
-            show_display=show_display
+            show_display=show_display,
+            camera_width=camera_width,
+            camera_height=camera_height,
+            camera_fourcc=camera_fourcc
         )
 
     def validate(self):
@@ -203,6 +237,24 @@ class Config:
 
         if self.cleanup_threshold_sec < 0:
             errors.append(f"cleanup_threshold_secは0以上の値である必要があります: {self.cleanup_threshold_sec}")
+
+        # カメラ解像度のチェック
+        # 片方だけの指定を弾くのは、幅だけ指定してもドライバが対応する組み合わせへ
+        # 勝手に丸めるため、意図した画角にならないまま気づけないため。
+        if (self.camera_width is None) != (self.camera_height is None):
+            errors.append(
+                "CAMERA_WIDTHとCAMERA_HEIGHTは両方指定するか、両方省略してください"
+            )
+
+        for name, value in (("CAMERA_WIDTH", self.camera_width),
+                            ("CAMERA_HEIGHT", self.camera_height)):
+            if value is not None and value <= 0:
+                errors.append(f"{name}は正の整数である必要があります: {value}")
+
+        if self.camera_fourcc is not None and len(self.camera_fourcc) != 4:
+            errors.append(
+                f"CAMERA_FOURCCは4文字である必要があります(例: MJPG): {self.camera_fourcc!r}"
+            )
 
         # 処理方式のチェック
         if self.method != "hybrid":

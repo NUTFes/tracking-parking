@@ -63,6 +63,26 @@ WEBCAM_FPS = 30.0
 CROSSING_METHOD = "hysteresis_v1"  # W&B上でPre/Post-3bのrunを区別する固定タグ(可変設定ではない)
 
 
+def apply_camera_capture_settings(cap, config: Config) -> None:
+    """カメラの要求解像度をドライバへ指定する。カメラ入力のときだけ呼ぶ。
+
+    指定しないとデバイス既定で開く（Logitech C270は640x480）。ライン座標は
+    別解像度のクリップ上で設定されるため、実行時の解像度がそれと違うと座標が
+    全てずれる。動画ファイル入力では解像度はファイル側が決めるので触らない。
+
+    FOURCCを先に設定するのは、解像度だけ指定しても対応しない組み合わせが
+    あるため（C270のYUYVは640x480までで、1280x720はMJPGでしか出ない）。
+
+    要求が通るとは限らずドライバは近い値へ丸める。呼び出し側は設定後に
+    必ず実測値を読み直す必要がある（この関数は要求するだけで、保証しない）。
+    """
+    if config.camera_fourcc:
+        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*config.camera_fourcc))
+    if config.camera_width is not None and config.camera_height is not None:
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, config.camera_width)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config.camera_height)
+
+
 @dataclass(frozen=True)
 class RuntimeSettings:
     use_wandb: bool
@@ -187,13 +207,35 @@ def process_video(
         print(f"エラー: 動画を開けません: {video_path}")
         return
 
+    is_camera_input = not isinstance(video_path, str)
+    if is_camera_input:
+        apply_camera_capture_settings(cap, config)
+
     # 動画情報を取得
+    # カメラの場合、ここで読む値は「要求した値」ではなくドライバが受理した実測値。
     fps = cap.get(cv2.CAP_PROP_FPS) or WEBCAM_FPS
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
     print(f"✓ 動画情報: {width}x{height} @ {fps}fps, {total_frames}フレーム")
+
+    # 要求が丸められたら黙って進まない。ライン座標がこの解像度前提で設定されて
+    # いるため、気づかないまま走らせると検知位置が静かにずれる。
+    if (
+        is_camera_input
+        and config.camera_width is not None
+        and (width, height) != (config.camera_width, config.camera_height)
+    ):
+        print(
+            f"[WARN] カメラが要求解像度を受理しませんでした: "
+            f"要求 {config.camera_width}x{config.camera_height} → 実際 {width}x{height}"
+            + (
+                ""
+                if config.camera_fourcc
+                else "（CAMERA_FOURCC=MJPG の指定が必要な場合があります）"
+            )
+        )
 
     # 時間窓（秒）をこの動画のfpsにおけるフレーム数へ変換する。
     max_frame_gap = frames_from_seconds(config.max_frame_gap_sec, fps)
@@ -274,6 +316,12 @@ def process_video(
         "frame_width": width,
         "frame_height": height,
         "source_fps": float(fps),
+        # 要求値も残す。frame_width/heightは実測値なので、両方ないと
+        # 「指定したのに丸められた」のか「指定していない」のかが後から分からない。
+        # 結果に効くのは実測値のほうなので、condition_keyへは入れない。
+        "camera_width_requested": config.camera_width if is_camera_input else None,
+        "camera_height_requested": config.camera_height if is_camera_input else None,
+        "camera_fourcc_requested": config.camera_fourcc if is_camera_input else None,
         "vehicle_classes": config.vehicle_classes,
         "method": config.method,
         "tracker_reset": True,
