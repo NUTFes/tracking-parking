@@ -183,5 +183,6 @@ uv run pytest -q          # 開発機
 - [docs/two-line-system.md](docs/two-line-system.md) — システム構成、設定パラメータ、アルゴリズム
 - [docs/verification.md](docs/verification.md) — 実動画1本での検証手順
 - [docs/api-verification.md](docs/api-verification.md) — API送信機能のローカル疎通確認手順
+- [docs/system-count-operation.md](docs/system-count-operation.md) — 稼働開始時に `system_count` を実測台数へ合わせる手順
 - [docs/wandb_integration_spec_v2.md](docs/wandb_integration_spec_v2.md) — 実験記録（W&B連携）の仕様
 - [docs/decisions/](docs/decisions/) — 設計上の決定記録
