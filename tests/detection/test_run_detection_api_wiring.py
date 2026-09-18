@@ -27,7 +27,8 @@ def test_LINE_CONDITION_KEYSは既知のキー集合と一致する():
         "yolo_iou", "yolo_device", "yolo_imgsz", "tracker_config",
         "tracker_config_sha256", "device_name", "device_accelerator",
         "frame_width", "frame_height", "source_fps", "warmup_frames",
-        "save_video", "save_logs", "show_display", "timing_schema_version",
+        "save_video", "save_logs", "show_display", "video_encoder",
+        "timing_schema_version",
         "git_sha", "git_dirty", "git_dirty_fingerprint", "python_version",
         "library_versions",
     }

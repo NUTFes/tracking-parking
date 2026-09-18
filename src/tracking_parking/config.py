@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from typing import Optional, Tuple
 from dotenv import load_dotenv
 
+from tracking_parking.output.video_recorder import ENCODER_CHOICES
+
 
 def _optional_int_env(name: str) -> Optional[int]:
     """未設定ならNone、設定されていればintで返す。
@@ -125,6 +127,10 @@ class Config:
     save_video: bool
     save_logs: bool
     show_display: bool
+    # アノテーション動画のエンコーダ。"auto"はNVENCがあれば使い、無ければCPU。
+    # cv2.VideoWriter(mp4v)のCPUエンコードは1280x720で約11.6ms/フレーム掛かり、
+    # NVENCなら約5.3msで済む（検知ループのフレーム予算に直接効く）。
+    video_encoder: str
 
     # カメラ入力の要求解像度（動画ファイル入力では使わない）
     # 指定しないとデバイス既定で開く。Logitech C270は既定が640x480で、
@@ -233,6 +239,7 @@ class Config:
         save_video = os.getenv("SAVE_VIDEO", "true").lower() == "true"
         save_logs = os.getenv("SAVE_LOGS", "true").lower() == "true"
         show_display = os.getenv("SHOW_DISPLAY", "false").lower() == "true"
+        video_encoder = os.getenv("VIDEO_ENCODER", "auto").lower()
 
         # カメラ入力の解像度。setup_lines.py と同じパーサを通す。
         camera = CameraCaptureSettings.from_env(env_path)
@@ -254,6 +261,7 @@ class Config:
             save_video=save_video,
             save_logs=save_logs,
             show_display=show_display,
+            video_encoder=video_encoder,
             camera_width=camera.width,
             camera_height=camera.height,
             camera_fourcc=camera.fourcc
@@ -296,6 +304,13 @@ class Config:
             height=self.camera_height,
             fourcc=self.camera_fourcc,
         ).validation_errors())
+
+        # エンコーダのチェック（使えるかどうかの判定は録画を開くときに行う）
+        if self.video_encoder not in ENCODER_CHOICES:
+            errors.append(
+                f"VIDEO_ENCODERは{'/'.join(ENCODER_CHOICES)}のいずれかです: "
+                f"{self.video_encoder!r}"
+            )
 
         # 処理方式のチェック
         if self.method != "hybrid":

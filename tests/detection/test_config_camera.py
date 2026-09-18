@@ -50,6 +50,7 @@ def make_config(**overrides) -> Config:
         save_video=False,
         save_logs=True,
         show_display=False,
+        video_encoder="auto",
         camera_width=None,
         camera_height=None,
         camera_fourcc=None,

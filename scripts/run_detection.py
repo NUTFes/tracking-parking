@@ -23,6 +23,7 @@ from tracking_parking.config import Config
 from tracking_parking.detection.line_crossing import LineCrossingDetector, get_vehicle_point
 from tracking_parking.detection.tracker import VehicleTracker
 from tracking_parking.output.video_writer import VideoAnnotator
+from tracking_parking.output.video_recorder import open_recorder
 from tracking_parking.output.event_logger import EventLogger
 from tracking_parking.common.camera import apply_camera_capture_settings as apply_capture_settings
 from tracking_parking.common.frame_stats import compute_timing_stats
@@ -168,6 +169,7 @@ LINE_CONDITION_KEYS = (
     "save_video",
     "save_logs",
     "show_display",
+    "video_encoder",
     "timing_schema_version",
     "git_sha",
     "git_dirty",
@@ -307,9 +309,19 @@ def process_video(
             "videos",
             f"annotated_{Path(str(video_path)).name if isinstance(video_path, str) else 'camera.mp4'}"
         )
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        out = cv2.VideoWriter(output_video_path, fourcc, fps, (width, height))
-        print(f"✓ 出力動画: {output_video_path}")
+        # ここはtry:の外なので、例外が出るとfinallyのcap.release()が飛ぶ。
+        # VIDEO_ENCODER=nvencを指定したが使えない場合にValueErrorが出るため、
+        # 明示的に後片付けしてから投げ直す。
+        try:
+            out = open_recorder(
+                output_video_path,
+                width=width, height=height, fps=fps,
+                encoder=config.video_encoder,
+            )
+        except Exception:
+            cap.release()
+            raise
+        print(f"✓ 出力動画: {output_video_path} (encoder={out.name})")
 
     print("\n処理開始...\n")
 
@@ -360,6 +372,10 @@ def process_video(
         "tracker_config_sha256": sha256_file(runtime.yolo_tracker),
         "warmup_frames": runtime.warmup_frames,
         "save_video": config.save_video,
+        # 要求値と実際に選ばれたエンコーダの両方を残す。autoは機体によって
+        # 解決先が変わり（NVENCの有無）、output_msが変わるため。
+        "video_encoder_requested": config.video_encoder,
+        "video_encoder": out.name if out is not None else None,
         "save_logs": config.save_logs,
         "show_display": config.show_display,
         "timing_schema_version": TIMING_SCHEMA_VERSION,
