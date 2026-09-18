@@ -102,6 +102,9 @@ JetsonではNVENC（ハードウェアエンコーダ）を使う。1280x720で�
 約5.3ms/フレームで、CPU(mp4v)の約11.6msより検知ループのフレーム予算を食わない。
 `VIDEO_ENCODER=auto` なら使える環境で自動的に選ばれる。
 
+設定キーと測定値の詳細、この設計に至った経緯は
+[docs/decisions/0003-camera-input-and-recording.md](docs/decisions/0003-camera-input-and-recording.md) を参照。
+
 ## API送信
 
 カメラ入力かつ `.env` の `API_ENABLED=true` のとき、検出した入出庫を

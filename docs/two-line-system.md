@@ -31,7 +31,8 @@ tracking-parking/
 │   │   ├── line_crossing.py     # ライン交差検知(外積法)
 │   │   └── tracker.py           # 車両トラッキング・状態管理
 │   ├── output/                   # 結果出力
-│   │   ├── video_writer.py      # アノテーション動画生成
+│   │   ├── video_writer.py      # アノテーション描画
+│   │   ├── video_recorder.py    # 録画先(NVENC/CPU、サイズ分割)
 │   │   └── event_logger.py      # イベントログ出力
 │   ├── common/                   # 計測・GT・W&Bの共通基盤
 │   └── eval/                     # 精度評価
@@ -45,6 +46,7 @@ tracking-parking/
     │   └── videos.json           # 同・実体
     └── outputs/                  # 出力結果
         ├── videos/               # アノテーション済み動画
+        │   └── camera_<開始時刻>/  # カメラ入力は分割して書く
         └── logs/                 # イベントログ(JSON/CSV)
 ```
 
@@ -60,6 +62,10 @@ uv sync
 ```
 
 これにより、`pyproject.toml`に定義された2ライン検知システムに必要な依存パッケージがすべてインストールされます。
+
+**エッジ機(Jetson Orin NX)では`uv sync`と`uv run`を使ってはいけない。** どちらも
+`.venv`をuv管理のPythonで作り直し、torchをPyPIの汎用ビルドへ置き換えるため、
+JetPackのCUDAドライバでは初期化できなくなる。手順はREADMEの「エッジ機」を参照。
 
 **インストールされるパッケージ:**
 - ultralytics (YOLOv8)
@@ -213,11 +219,53 @@ W&Bの有効・無効にかかわらず、runごとに
 ### アノテーション動画 (`data/outputs/videos/`)
 
 元の動画に以下の情報を重ねて表示:
+- **日本時刻**（`2026-09-18 11:29:04 JST`）- APIへ送る`detected_at`と同じ値
 - Line1 (緑色) - 入口側ライン
 - Line2 (黄色) - 駐車場側ライン
 - 車両代表点とtrack_ID
 - リアルタイムカウント(入庫/出庫/駐車台数)
 - 処理時間
+
+焼き込む文字列はすべてASCII。`cv2.putText`が使うHersheyフォントはASCIIしか持たず、
+非ASCIIは1文字ずつ`?`として描かれる（`"Line1 (入口側)"`は`"Line1 (???)"`になる）。
+この環境のOpenCVは`freetype`モジュールを含まないためTTF描画へ逃げられない。
+日本語の説明は動画ではなく端末側に出す。
+
+時刻を焼き込むのは、事後分析で動画のどの位置がいつなのかを知る必要があるため。
+`frame_read_at`（APIの`detected_at`と同じ値）を使うので、イベント記録と突き合わせ
+られる。タイムゾーンは固定オフセット+09:00へ変換する。機体の設定がUTCのままでも
+日本時刻を焼き込むためで、JSTは夏時間が無いので固定で厳密に表せる。
+
+出力のレイアウトは入力の種類で変わる。
+
+```
+data/outputs/videos/
+  camera_20260918_143000/        # カメラ入力: 実行開始時刻のディレクトリへ分割
+      segment_00000.mp4
+      segment_00001.mp4
+  annotated_<入力名>.mp4          # 動画ファイル入力: 単一ファイル
+```
+
+カメラ入力を分割するのは、mp4のインデックス(moov atom)が終了時に書かれるため、
+分割しないままプロセスが落ちると**それまでの全録画が再生不能になる**ため
+（`SIGKILL`で落とすと`ffprobe`が`moov atom not found`を返すことを実測で確認した）。
+分割しておけば失うのは書きかけの1本だけで済む。
+
+分割の基準は時間ではなくサイズ（`VIDEO_SEGMENT_MB`）。`splitmuxsink`の
+`max-size-time`はバッファのタイムスタンプ基準で、これは公称fpsから作られるため、
+実効fpsと一致しない環境では「10分」の指定が実時間で約25分になる。バイト数は
+このずれを受けない。各セグメントの正確な時刻は焼き込んだJSTから読む。
+
+`VIDEO_MAX_SEGMENTS`を1以上にすると**ファイル名が循環する**。`splitmuxsink`の
+`max-files`がリングバッファとして動くためで、2400フレームを`max-files=3`で流すと
+index 0..2の3本だけが残り、mtimeでは`segment_00000`が最新だった。
+**名前から時系列は読めない**ので、mtimeか焼き込んだJSTで判断する。既定は0（無制限）で、
+事後分析用の証跡を黙って消さない。
+
+エンコーダは`VIDEO_ENCODER`で選ぶ（`auto`/`nvenc`/`cv2`）。`auto`はNVENCが使えれば
+使い、無ければCPUへ落ちる。1280x720での書き込みはNVENCが約5.3ms/フレーム、
+CPU(mp4v)が約11.6msで、検知ループのフレーム予算に直接効く。詳細は
+[decisions/0003-camera-input-and-recording.md](decisions/0003-camera-input-and-recording.md)。
 
 ### イベントログ JSON (`data/outputs/logs/events_YYYYMMDD_HHMMSS.json`)
 
@@ -293,15 +341,30 @@ MAX_FRAME_GAP_SEC=3.0      # Line1とLine2の通過を対応付ける最大の�
 CLEANUP_THRESHOLD_SEC=5.0  # 古い追跡をクリーンアップするまでの未更新時間(秒)
 ```
 
-**時間窓は秒で指定する。** 動画を開いた時点のfpsからフレーム数へ変換する
-（`common/time_windows.py`の`frames_from_seconds`）。フレーム数で直接持つと、
-同じ設定値が撮影fpsによって別の長さを意味してしまう。90フレームは30fpsで3秒だが、
-10fpsでは9秒になる。検証に使ってきた動画は30fps、実機のRaspberry Piは10fps前後で
-動くため、フレーム基準のままでは検証と実運用のあいだに黙って差が入る。
+**時間窓は秒で指定し、判定も秒で行う。** フレーム数で直接持つと、同じ設定値が
+撮影fpsによって別の長さを意味してしまう。90フレームは30fpsで3秒だが、10fpsでは9秒に
+なる。検証に使ってきた動画は30fps、実機のRaspberry Piは10fps前後で動くため、
+フレーム基準のままでは検証と実運用のあいだに黙って差が入る。
+
+判定に使うのは「ストリーム時刻」で、入力の種類で作り方が変わる
+（`scripts/run_detection.py`の`compute_stream_time_sec`）。
+
+| 入力 | ストリーム時刻 | 理由 |
+|---|---|---|
+| 動画ファイル | `frame_id / fps` | 全フレームを順に処理するので、処理が何秒かかっても映像内の経過は変わらない。再現性が保たれる |
+| カメラ | 処理開始からの実経過 | 処理が撮影レートに追いつかないとドライバのバッファ(4枚)で古いフレームが捨てられ、処理したフレーム数は実経過より少なくなる |
+
+**カメラで実経過を使うのは、公称fpsが実効fpsと一致しないため。** Jetson Orin NXで
+Logitech C270を使うと、公称30fpsに対し実測は約14fps（推論60ms＋MJPGデコード11ms）
+だった。`frame_id / fps` で換算すると「3秒」の窓が実時間で6秒以上に伸び、Line1と
+Line2の対応付けとtrackのクリーンアップの両方がずれる。これは動画ファイルでは
+再現せず、ライブカメラを繋いだときだけ現れる。
 
 既定値（3.0秒・5.0秒）は旧既定のフレーム数（90・150）を30fpsで換算した値と一致する。
-30fpsの動画では挙動が変わらない。runには秒（`max_frame_gap_sec`）と変換後の
-フレーム数（`max_frame_gap`）の両方を記録し、`condition_key`にはフレーム数が入る。
+30fpsの動画では挙動が変わらない（検証クリップのイベントログが変更前後で完全一致する
+ことを確認済み）。runには秒（`max_frame_gap_sec`）と、参考値として動画入力での換算後の
+フレーム数（`max_frame_gap_frames`、カメラでは`null`）を記録する。
+**`condition_key`に入るのは秒のほう**で、トラッカーの実際の判定単位がそちらだから。
 
 旧`MAX_FRAME_GAP`／`CLEANUP_THRESHOLD`が`.env`に残っている場合は、黙って無視せず
 起動時にエラーで移行を促す。
@@ -358,13 +421,13 @@ SPOOL_PATH=data/outputs/unsent_events.jsonl          # 送れなかったイベ�
 ```
 IF Line1を交差:
     IF 方向 == IN:
-        IF Line2もLine1の後に交差(max_frame_gap以内):
+        IF Line2もLine1の後に交差(max_frame_gap_sec以内):
             -> 入庫(信頼度: HIGH)
         ELSE:
             -> 入庫(信頼度: NORMAL)
 
     IF 方向 == OUT:
-        IF Line2がLine1の前に交差(max_frame_gap以内):
+        IF Line2がLine1の前に交差(max_frame_gap_sec以内):
             -> 出庫(信頼度: HIGH)
         ELSE:
             -> 出庫(信頼度: NORMAL)

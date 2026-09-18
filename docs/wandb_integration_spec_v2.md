@@ -17,7 +17,7 @@
 
 > **本ドキュメントの位置づけ（2026-09-10 追記）**
 > 本仕様は2方式が並存していた時期に書かれたものである。その後2ライン方式の採用が決まり
-> （[decisions/0001-two-line-method.md](../decisions/0001-two-line-method.md)）、ROI方式
+> （[decisions/0001-two-line-method.md](decisions/0001-two-line-method.md)）、ROI方式
 > （`roi-counter/`）のコードは本ブランチには存在しない。ROI方式に言及する箇所は、
 > 比較設計の経緯を残すための記述として読むこと。現行コードでの対応は次のとおり。
 >
@@ -55,7 +55,7 @@
 8. **ネットワークの無い環境（Raspberry Pi 実機）での計測を第一級ユースケースとする。**
    - `WANDB_MODE` 環境変数（`online` / `offline`）を尊重する。offline 時はローカルに記録され、後日 `wandb sync` でアップロードできる。
    - README（または各スクリプトの docstring）に offline 計測 → sync の手順を 3〜4 行で記載すること。
-   - **運用は `offline` に固定する（2026-08-26 決定）**。`online` はネットワークへ到達できない環境で `wandb.init()` がハングし、`WANDB_INIT_TIMEOUT` でも `Settings(init_timeout)` でも打ち切れない。実測値と根拠は [verification.md](../verification.md) の0章に記載した。
+   - **運用は `offline` に固定する（2026-08-26 決定）**。`online` はネットワークへ到達できない環境で `wandb.init()` がハングし、`WANDB_INIT_TIMEOUT` でも `Settings(init_timeout)` でも打ち切れない。実測値と根拠は [verification.md](verification.md) の0章に記載した。
    - **本番運用では `--wandb` / `USE_WANDB` を付けない（2026-08-26 決定）**。ネットワーク断が入出庫カウントの停止に直結する状態を、24/7で動く監視系へ持ち込まないため。ROI方式の `main.py` も同じ理由でW&B非対応のままとする。
 
 ---
@@ -87,7 +87,7 @@
 | `yolo_imgsz` / `tracker_config` | int/str | 実際の入力サイズとtracker設定 | `model.track()` 引数 |
 | **ロジック別パラメータ** | | | |
 | `s_low` / `s_high` | float | roi-counter の閾値 | roi-counter のみ |
-| `margin` / `max_frame_gap` / `cleanup_threshold` | num | line_detection のパラメータ | line_detection のみ |
+| `margin` / `max_frame_gap_sec` / `cleanup_threshold_sec` | num | line_detection のパラメータ（秒。トラッカーの判定単位） | line_detection のみ |
 | `line1_points` / `line2_points` | list | 各ラインの始点・終点 | line_detection のみ |
 | `parking_reference_point` | list | 駐車場側を決める基準点 | line_detection のみ |
 | **run識別・再現情報（必須）** | | | |
@@ -302,7 +302,7 @@ from tracking_parking.common.frame_stats import compute_frame_stats
 
 - `process_video()` に W&B 連携を追加。
 - `config`は`logic_name="line_detection"`、Line1・Line2の全座標、駐車場基準点、
-  `margin`、`max_frame_gap`、`cleanup_threshold`、YOLO実引数、入力・モデルhash、
+  `margin`、`max_frame_gap_sec`、`cleanup_threshold_sec`、YOLO実引数、入力・モデルhash、
   Git・主要ライブラリ版を含める。
 - **処理時間の生リストは `process_video()` 内のローカルリストで保持する**（`EventLogger` クラスは変更しない。processing_time_ms を計算している箇所で同じ値を append するだけ）。
 - フレームループで間引き付き `log_frame`。`net_flow` は `tracker.get_net_flow()` 相当の値（`count_in - count_out`）、`num_tracks` はそのフレームで新たにIDが割り当てられた検出数、`retained_states` は `len(tracker.states)`（保持中の状態数、num_tracksとは別概念）。カウント確定時（`mark_as_counted` が呼ばれたフレーム）は間引き中でも log。

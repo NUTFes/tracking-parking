@@ -226,7 +226,8 @@ print('count_error:', data.get('accuracy', {}).get('count_error'))
 |---|---|
 | `logs/events_<timestamp>.json` | イベント列・summary・timing・run識別子・GT比較結果 |
 | `logs/events_<timestamp>.csv` | 同内容のCSV |
-| `videos/annotated_<動画名>.mp4` | 可視化済み動画（`SAVE_VIDEO=true` 時） |
+| `videos/annotated_<動画名>.mp4` | 可視化済み動画（動画ファイル入力・`SAVE_VIDEO=true` 時） |
+| `videos/camera_<開始時刻>/segment_NNNNN.mp4` | 同（カメラ入力。サイズで分割する） |
 | `manifests/<execution_id>.json` | run識別子・再現情報・出力パスの相互参照 |
 
 ## 6. 速度比較のためのrun
