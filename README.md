@@ -105,6 +105,37 @@ JetsonではNVENC（ハードウェアエンコーダ）を使う。1280x720で�
 設定キーと測定値の詳細、この設計に至った経緯は
 [docs/decisions/0003-camera-input-and-recording.md](docs/decisions/0003-camera-input-and-recording.md) を参照。
 
+## 本番実行（エッジ機）
+
+ライン設定だけGUIでの手作業が要るため、初回の設定と繰り返す実行を分けている。
+
+```bash
+# 初回のみ（画角を変えたときも）: 設置カメラの画角でライン座標を設定する
+scripts/setup_production_lines.sh
+
+# 毎回: 事前チェック → 検知 → API送信 → 録画
+scripts/run_production.sh
+```
+
+`run_production.sh` は `jetson-production.env`（API設定）を環境へ入れてから
+`jetson-newcam.env`（検知設定）で起動する。`run_detection.py --env` は指定ファイル
+だけを読むため、API設定は環境変数で渡す必要がある。差し替えは環境変数で行う
+（`DETECT_ENV` / `API_ENV` / `CAMERA` / `PYTHON` / `LOG_DIR`）。
+
+**事前チェックで止まる条件**（`scripts/preflight.py` 単体でも実行できる）:
+
+- CUDAが使えない（`uv sync` / `uv run` で `.venv` が作り直された場合）
+- カメラを開けない、または要求解像度が受理されなかった
+- **ライン座標が画角の外にある** — 起動はするが一度も交差せず、イベントが
+  ゼロのまま静かに動き続けるため、実行前に捕まえる
+- `API_ENABLED=true` なのに `DEVICE_API_KEY` が空
+- 録画先の空き容量が少ない
+
+停止は `Ctrl+C`（SIGINT）。`finally` を通って
+`cap.release()` → `out.release()` → `api.shutdown()` の順で後片付けし、
+録画の最後のセグメントも再生可能な状態で確定する。`kill -9` では書きかけの
+1本が再生不能になる（分割しているのでそれ以前は無事）。
+
 ## API送信
 
 カメラ入力かつ `.env` の `API_ENABLED=true` のとき、検出した入出庫を
@@ -136,7 +167,7 @@ uv run pytest -q          # 開発機
 
 | パス | 役割 |
 |---|---|
-| `scripts/` | CLIエントリポイント |
+| `scripts/` | CLIエントリポイント（`run_production.sh` / `setup_production_lines.sh` は実機運用用） |
 | `src/tracking_parking/` | 本体パッケージ（検知ロジック、出力、共通基盤、評価） |
 | `tests/` | テスト |
 | `docs/` | 設計・検証・決定の記録 |
