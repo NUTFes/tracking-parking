@@ -11,6 +11,7 @@ import math
 import os
 import platform
 import shutil
+import signal
 import sys
 import time
 from dataclasses import dataclass
@@ -479,6 +480,9 @@ def process_video(
     # try:の外で例外が出るとfinallyのapi.shutdown()がNameErrorになるため、
     # ApiRuntime.create()より先にNoneで初期化しておく。
     api: ApiRuntime | None = None
+    # 同じ理由でSIGINTハンドラの退避先も先に用意する。ループ到達前に例外が
+    # 出ると、finallyのsignal.signal()がNameErrorになるため。
+    previous_sigint = None
 
     try:
         # API送信ランタイムを組み立てる。送信ガード（カメラ入力 かつ
@@ -494,6 +498,26 @@ def process_video(
             simulate_camera_input=simulate_camera_input,
         )
         api.start()
+
+        # SIGINTは既定だとフレーム処理の途中でKeyboardInterruptを投げるため、
+        # ループ後のログ保存（save_json/save_csv）・マニフェスト・サマリー出力が
+        # まるごと飛ばされる。run_production.shは「停止はCtrl+C」と案内しており、
+        # 案内どおりに止めるとイベントログが残らない状態だった。
+        # フラグを立ててフレーム境界で抜け、後片付けを通常経路へ通す。
+        # ハンドラは即座に既定へ戻すので、2回目のCtrl+Cは従来どおり即時終了する。
+        interrupted = False
+
+        def _handle_sigint(signum, frame_):
+            nonlocal interrupted
+            interrupted = True
+            signal.signal(signal.SIGINT, previous_sigint)
+            print(
+                "\n停止要求を受け付けました。"
+                "現在のフレームを処理してから終了します（もう一度Ctrl+Cで即時終了）",
+                flush=True,
+            )
+
+        previous_sigint = signal.signal(signal.SIGINT, _handle_sigint)
 
         while cap.isOpened():
             with elapsed_timer() as end_to_end_timer:
@@ -681,7 +705,7 @@ def process_video(
                 )
 
             frame_id += 1
-            if quit_requested:
+            if quit_requested or interrupted:
                 print("\nユーザーによる中断")
                 break
 
@@ -765,6 +789,8 @@ def process_video(
         exit_code = 1
         raise
     finally:
+        if previous_sigint is not None:
+            signal.signal(signal.SIGINT, previous_sigint)
         cap.release()
         if out:
             out.release()
