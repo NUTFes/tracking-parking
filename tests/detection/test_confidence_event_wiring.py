@@ -11,9 +11,9 @@ LINE2 = Line(start=(0, 50), end=(100, 50))
 PARKING_REF_POINT = (50, 100)
 
 
-def process_frame(tracker, detector, event_logger, track_id, point, frame_id):
+def process_frame(tracker, detector, event_logger, track_id, point, stream_time_sec):
     """Corrected main.py per-frame ordering for one detection."""
-    state = tracker.update(track_id, point, frame_id)
+    state = tracker.update(track_id, point, stream_time_sec)
 
     line1_result = detector.update_line1_crossing(
         state.line1_transition, state.curr_point
@@ -35,9 +35,9 @@ def process_frame(tracker, detector, event_logger, track_id, point, frame_id):
     for line_name, result in crossings:
         if line_name == "line1":
             if not state.counted:
-                state.record_line1_crossing(result.direction, frame_id)
+                state.record_line1_crossing(result.direction, stream_time_sec)
         else:
-            state.record_line2_crossing(result.direction, frame_id)
+            state.record_line2_crossing(result.direction, stream_time_sec)
 
     pending_events = []
     if tracker.should_count_event(state):
@@ -45,13 +45,15 @@ def process_frame(tracker, detector, event_logger, track_id, point, frame_id):
         pending_events.append({
             "track_id": track_id,
             "event_type": event_type,
-            "frame_id": frame_id,
+            # EventLoggerのframe_idは実際のフレーム番号。このテストでは
+            # 1フレーム=1秒として進めるので値は一致する。
+            "frame_id": int(stream_time_sec),
             "fps": 30.0,
             "confidence": state.confidence,
             "line2_crossed": state.line2_direction is not None,
         })
 
-    tracker.cleanup_stale_tracks(frame_id)
+    tracker.cleanup_stale_tracks(stream_time_sec)
 
     for event in pending_events:
         event_id = event_logger.record_event(**event)
@@ -60,7 +62,7 @@ def process_frame(tracker, detector, event_logger, track_id, point, frame_id):
             state.pending_event_id = event_id
 
     # The event must be recorded before its event_id can receive a confidence update.
-    confidence_updates = tracker.resolve_pending_confidences(frame_id)
+    confidence_updates = tracker.resolve_pending_confidences(stream_time_sec)
     for update in confidence_updates:
         assert event_logger.update_confidence(
             update.event_id,
@@ -83,12 +85,12 @@ def test_same_frame_double_crossing_wires_event_id_before_confidence_update():
         margin_px=5.0,
         endpoint_margin_px=0.0,
     )
-    tracker = VehicleTracker(max_frame_gap=90, cleanup_threshold=150)
+    tracker = VehicleTracker(max_gap_sec=90, cleanup_threshold_sec=150)
     event_logger = EventLogger(video_path="test.mp4")
 
-    process_frame(tracker, detector, event_logger, 1, (50, -11), frame_id=0)
+    process_frame(tracker, detector, event_logger, 1, (50, -11), stream_time_sec=0)
     state = process_frame(
-        tracker, detector, event_logger, 1, (50, 61), frame_id=1
+        tracker, detector, event_logger, 1, (50, 61), stream_time_sec=1
     )
 
     assert state.passed_order == ["line1", "line2"]

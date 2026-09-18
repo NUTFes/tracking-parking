@@ -11,6 +11,7 @@ import math
 import os
 import platform
 import sys
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -62,6 +63,31 @@ from tracking_parking.api.settings import ApiSettings, is_local_network_url
 
 WEBCAM_FPS = 30.0
 CROSSING_METHOD = "hysteresis_v1"  # W&B上でPre/Post-3bのrunを区別する固定タグ(可変設定ではない)
+
+
+def compute_stream_time_sec(
+    *, is_camera_input: bool, frame_id: int, fps: float, elapsed_sec: float
+) -> float:
+    """時間窓（Line1とLine2の対応付け、trackのクリーンアップ）の判定に使う
+    ストリーム時刻(秒)を返す。
+
+    動画ファイルでは frame_id / fps が厳密なストリーム時刻になる。全フレームを
+    順に処理するため、処理が何秒かかろうと映像内の経過は変わらない。
+
+    カメラでは違う。処理が撮影レートに追いつかないとドライバのバッファ（4枚）で
+    古いフレームが捨てられるため、処理したフレーム数は実際の経過より少ない。
+    30fps宣言のカメラを実測14fpsで処理すると frame_id / fps は実経過の半分以下に
+    なり、「3秒」の窓が実時間で6秒以上に伸びる。カメラだけ実時刻を使う。
+
+    Args:
+        is_camera_input: カメラ入力ならTrue
+        frame_id: 現在のフレーム番号（動画入力でのみ使う）
+        fps: 動画のfps（動画入力でのみ使う）
+        elapsed_sec: 処理開始からの実経過秒（カメラ入力でのみ使う）
+    """
+    if is_camera_input:
+        return elapsed_sec
+    return frame_id / fps if fps > 0 else 0.0
 
 
 def apply_camera_capture_settings(cap, config: Config) -> None:
@@ -123,8 +149,8 @@ LINE_CONDITION_KEYS = (
     "margin_px",
     "endpoint_margin_px",
     "crossing_method",
-    "max_frame_gap",
-    "cleanup_threshold",
+    "max_frame_gap_sec",
+    "cleanup_threshold_sec",
     "tracker_reset",
     "log_interval_sec",
     "yolo_conf",
@@ -232,19 +258,21 @@ def process_video(
             )
         )
 
-    # 時間窓（秒）をこの動画のfpsにおけるフレーム数へ変換する。
-    max_frame_gap = frames_from_seconds(config.max_frame_gap_sec, fps)
-    cleanup_threshold = frames_from_seconds(config.cleanup_threshold_sec, fps)
+    # 時間窓は秒のままトラッカーへ渡し、判定にはストリーム時刻を使う（stream_time_sec）。
+    # 換算後のフレーム数は記録のためだけに残す（動画入力でのみ意味を持つ）。
+    max_frame_gap = frames_from_seconds(config.max_frame_gap_sec, fps) if not is_camera_input else None
+    cleanup_threshold = frames_from_seconds(config.cleanup_threshold_sec, fps) if not is_camera_input else None
 
     # トラッカーを初期化
     tracker = VehicleTracker(
-        max_frame_gap=max_frame_gap,
-        cleanup_threshold=cleanup_threshold
+        max_gap_sec=config.max_frame_gap_sec,
+        cleanup_threshold_sec=config.cleanup_threshold_sec
     )
     print(
         f"✓ トラッカー初期化: "
-        f"max_frame_gap={max_frame_gap}フレーム({config.max_frame_gap_sec}秒), "
-        f"cleanup={cleanup_threshold}フレーム({config.cleanup_threshold_sec}秒) @ {fps}fps"
+        f"max_frame_gap={config.max_frame_gap_sec}秒, "
+        f"cleanup={config.cleanup_threshold_sec}秒 "
+        f"({'実時刻' if is_camera_input else f'frame_id/{fps}fps'}基準)"
     )
 
     # ライン交差検知器を初期化
@@ -287,11 +315,13 @@ def process_video(
 
     input_type = "file" if isinstance(video_path, str) else "camera"
     dataset = Path(str(video_path)).stem if isinstance(video_path, str) else f"camera_{video_path}"
+    # 表示名と記録に使う。トラッカーの判定単位は秒なので、ここも秒を出す。
+    # 換算後のフレーム数は下のrun_configへ参考値として別途残す。
     exp_params = {
-        "cleanup_threshold": cleanup_threshold,
+        "cleanup_threshold_sec": config.cleanup_threshold_sec,
         "margin_px": config.margin_px,
         "endpoint_margin_px": config.endpoint_margin_px,
-        "max_frame_gap": max_frame_gap,
+        "max_frame_gap_sec": config.max_frame_gap_sec,
         "crossing_method": CROSSING_METHOD,
     }
     reproducibility = collect_reproducibility_info()
@@ -333,10 +363,10 @@ def process_video(
         "save_logs": config.save_logs,
         "show_display": config.show_display,
         "timing_schema_version": TIMING_SCHEMA_VERSION,
-        # 秒（仕様）と、上のexp_params側に入る変換後のフレーム数（実際の挙動）を
-        # 両方残す。condition_keyに入るのはフレーム数のほう。
-        "max_frame_gap_sec": config.max_frame_gap_sec,
-        "cleanup_threshold_sec": config.cleanup_threshold_sec,
+        # 換算後のフレーム数は参考値。動画入力では frame_id/fps がそのまま
+        # ストリーム時刻なので秒と1対1に対応するが、カメラでは対応しないためNone。
+        "max_frame_gap_frames": max_frame_gap,
+        "cleanup_threshold_frames": cleanup_threshold,
         **exp_params,
         **reproducibility,
         **build_ground_truth_config(gt),
@@ -368,6 +398,8 @@ def process_video(
     prev_count_in = 0
     prev_count_out = 0
     synchronize_model = model_synchronizer(model, runtime.yolo_device)
+    # カメラ入力でストリーム時刻の起点に使う。動画入力では使わない。
+    stream_t0 = time.monotonic()
     exit_code = 0
     # try:の外で例外が出るとfinallyのapi.shutdown()がNameErrorになるため、
     # ApiRuntime.create()より先にNoneで初期化しておく。
@@ -398,6 +430,13 @@ def process_video(
                 if not ret:
                     break
 
+                stream_time_sec = compute_stream_time_sec(
+                    is_camera_input=is_camera_input,
+                    frame_id=frame_id,
+                    fps=fps,
+                    elapsed_sec=time.monotonic() - stream_t0,
+                )
+
                 # 2.1 YOLO検知+トラッキング。CPU化までを共通推論区間に含める。
                 with elapsed_timer(synchronize_model) as inference_timer:
                     results = model.track(
@@ -424,7 +463,7 @@ def process_video(
                 with elapsed_timer() as counting_timer:
                     for track_id, bbox in detections:
                         vehicle_point = get_vehicle_point(bbox)
-                        state = tracker.update(track_id, vehicle_point, frame_id)
+                        state = tracker.update(track_id, vehicle_point, stream_time_sec)
 
                         line1_result = detector.update_line1_crossing(
                             state.line1_transition, state.curr_point
@@ -448,11 +487,11 @@ def process_video(
                             if line_name == "line1":
                                 if not state.counted:
                                     state.record_line1_crossing(
-                                        result.direction, frame_id
+                                        result.direction, stream_time_sec
                                     )
                             else:
                                 state.record_line2_crossing(
-                                    result.direction, frame_id
+                                    result.direction, stream_time_sec
                                 )
                         if tracker.should_count_event(state):
                             event_type = tracker.mark_as_counted(track_id)
@@ -464,7 +503,7 @@ def process_video(
                                 "confidence": state.confidence,
                                 "line2_crossed": state.line2_direction is not None,
                             })
-                    tracker.cleanup_stale_tracks(frame_id)
+                    tracker.cleanup_stale_tracks(stream_time_sec)
 
                 core_ms = inference_timer.elapsed_ms + counting_timer.elapsed_ms
                 quit_requested = False
@@ -476,7 +515,7 @@ def process_video(
                         if state is not None:
                             state.pending_event_id = event_id
                     # event_idを割り当ててからconfidenceをイベントへ反映する必要がある。
-                    confidence_updates = tracker.resolve_pending_confidences(frame_id)
+                    confidence_updates = tracker.resolve_pending_confidences(stream_time_sec)
                     for update in confidence_updates:
                         if not event_logger.update_confidence(
                             update.event_id,
@@ -520,7 +559,7 @@ def process_video(
             count_in = summary["total_in"]
             count_out = summary["total_out"]
             count_changed = count_in != prev_count_in or count_out != prev_count_out
-            t_rel_sec = frame_id / fps if fps > 0 else 0.0
+            t_rel_sec = stream_time_sec
             if should_log_frame(t_rel_sec, next_log_sec, count_changed):
                 wandb_logger.log_frame(
                     step=frame_id,

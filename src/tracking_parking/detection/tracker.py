@@ -1,11 +1,18 @@
 """
 車両トラッキングと状態管理モジュール
 ハイブリッド方式による入出庫判定を実装
+
+時間窓（Line1とLine2の対応付け、trackのクリーンアップ）は秒で扱い、判定には
+呼び出し側が与える「ストリーム時刻」を使う。フレーム番号の差で判定していた頃は、
+秒指定を開いた時点のfpsでフレーム数へ換算していたが、これは処理が撮影レートに
+追いつく前提に立っていた。ライブカメラでは処理が追いつかず古いフレームが捨て
+られるため、30fps宣言のカメラを実測14fpsで処理すると「3秒」の窓が実時間で
+6秒以上に伸びる。動画ファイルでは frame_id / fps が厳密にストリーム時刻なので、
+この変更で挙動は変わらない。
 """
 
 from dataclasses import dataclass, field
 from typing import Dict, Literal, Optional, Tuple, List
-import time
 
 from tracking_parking.detection.line_crossing import LineTransitionState
 
@@ -38,13 +45,11 @@ class VehicleState:
 
     # Line1状態(主判定ライン)
     line1_direction: Optional[str] = None  # "IN" or "OUT"
-    line1_frame: Optional[int] = None
-    line1_timestamp: Optional[float] = None
+    line1_time: Optional[float] = None  # 通過したストリーム時刻(秒)
 
     # Line2状態(補助ライン)
     line2_direction: Optional[str] = None  # "IN" or "OUT"
-    line2_frame: Optional[int] = None
-    line2_timestamp: Optional[float] = None
+    line2_time: Optional[float] = None  # 通過したストリーム時刻(秒)
 
     # イベント追跡
     passed_order: List[str] = field(default_factory=list)  # ["line1", "line2"] など
@@ -53,76 +58,74 @@ class VehicleState:
     pending_event_id: Optional[str] = None
 
     # 更新追跡
-    last_update_frame: int = 0
+    last_update_time: float = 0.0  # 最後に位置が入ったストリーム時刻(秒)
 
-    def update_position(self, point: Tuple[float, float], frame_id: int):
+    def update_position(self, point: Tuple[float, float], stream_time_sec: float):
         """
         車両位置を更新
 
         Args:
             point: 新しい車両位置
-            frame_id: フレーム番号
+            stream_time_sec: ストリーム時刻(秒)
         """
         self.prev_point = self.curr_point
         self.curr_point = point
-        self.last_update_frame = frame_id
+        self.last_update_time = stream_time_sec
 
-    def record_line1_crossing(self, direction: str, frame_id: int):
+    def record_line1_crossing(self, direction: str, stream_time_sec: float):
         """
         Line1交差を記録
 
         Args:
             direction: "IN" or "OUT"
-            frame_id: フレーム番号
+            stream_time_sec: ストリーム時刻(秒)
         """
         self.line1_direction = direction
-        self.line1_frame = frame_id
-        self.line1_timestamp = time.time()
+        self.line1_time = stream_time_sec
         self.passed_order.append("line1")
 
-    def record_line2_crossing(self, direction: str, frame_id: int):
+    def record_line2_crossing(self, direction: str, stream_time_sec: float):
         """
         Line2交差を記録
 
         Args:
             direction: "IN" or "OUT"
-            frame_id: フレーム番号
+            stream_time_sec: ストリーム時刻(秒)
         """
         self.line2_direction = direction
-        self.line2_frame = frame_id
-        self.line2_timestamp = time.time()
+        self.line2_time = stream_time_sec
         self.passed_order.append("line2")
 
     def resolve_confidence(
         self,
-        current_frame: int,
-        max_frame_gap: int,
+        current_time_sec: float,
+        max_gap_sec: float,
     ) -> Optional[Confidence]:
         """
         pendingの信頼度を、現在までのライン通過履歴から解決する。
 
         Args:
-            current_frame: 現在のフレーム番号
-            max_frame_gap: Line1とLine2の最大フレーム差
+            current_time_sec: 現在のストリーム時刻(秒)
+            max_gap_sec: Line1とLine2の通過を対応付ける最大の時間差(秒)
 
         Returns:
             Optional[Confidence]: "pending"、"high"、"normal"、またはNone
         """
-        if not self.counted or self.line1_frame is None:
+        if not self.counted or self.line1_time is None:
             return None
 
         if self.confidence in ("high", "normal"):
             return self.confidence
 
         if self.line1_direction == "IN" and self.line2_direction is None:
-            if current_frame - self.line1_frame > max_frame_gap:
+            if current_time_sec - self.line1_time > max_gap_sec:
                 self.confidence = "normal"
             else:
                 self.confidence = "pending"
             return self.confidence
 
         # OUTでLine2が未通過なら、期待順序 line2→line1 はすでに成立しない。
-        if self.line2_direction is None or self.line2_frame is None:
+        if self.line2_direction is None or self.line2_time is None:
             self.confidence = "normal"
             return self.confidence
 
@@ -134,10 +137,10 @@ class VehicleState:
             self.confidence = "normal"
             return self.confidence
 
-        frame_diff = abs(self.line1_frame - self.line2_frame)
+        time_diff = abs(self.line1_time - self.line2_time)
         valid_pair = (
             self.line1_direction == self.line2_direction
-            and frame_diff <= max_frame_gap
+            and time_diff <= max_gap_sec
             and self.passed_order == expected_order
         )
         self.confidence = "high" if valid_pair else "normal"
@@ -147,15 +150,15 @@ class VehicleState:
 class VehicleTracker:
     """車両トラッキングクラス"""
 
-    def __init__(self, max_frame_gap: int = 90, cleanup_threshold: int = 150):
+    def __init__(self, max_gap_sec: float = 3.0, cleanup_threshold_sec: float = 5.0):
         """
         Args:
-            max_frame_gap: Line1とLine2の最大フレーム差
-            cleanup_threshold: 古い追跡をクリーンアップするフレーム数
+            max_gap_sec: Line1とLine2の通過を対応付ける最大の時間差(秒)
+            cleanup_threshold_sec: 古い追跡をクリーンアップするまでの未更新時間(秒)
         """
         self.states: Dict[int, VehicleState] = {}
-        self.max_frame_gap = max_frame_gap
-        self.cleanup_threshold = cleanup_threshold
+        self.max_gap_sec = max_gap_sec
+        self.cleanup_threshold_sec = cleanup_threshold_sec
 
         # 統計情報
         self.total_in = 0
@@ -163,14 +166,16 @@ class VehicleTracker:
         self.high_confidence_count = 0
         self.normal_confidence_count = 0
 
-    def update(self, track_id: int, point: Tuple[float, float], frame_id: int) -> VehicleState:
+    def update(
+        self, track_id: int, point: Tuple[float, float], stream_time_sec: float
+    ) -> VehicleState:
         """
         車両状態を更新または作成
 
         Args:
             track_id: トラッキングID
             point: 車両位置
-            frame_id: フレーム番号
+            stream_time_sec: ストリーム時刻(秒)
 
         Returns:
             VehicleState: 更新された車両状態
@@ -180,7 +185,7 @@ class VehicleTracker:
             self.states[track_id] = VehicleState(track_id=track_id)
 
         state = self.states[track_id]
-        state.update_position(point, frame_id)
+        state.update_position(point, stream_time_sec)
 
         return state
 
@@ -246,7 +251,7 @@ class VehicleTracker:
 
     def resolve_pending_confidences(
         self,
-        current_frame: int,
+        current_time_sec: float,
     ) -> List[ConfidenceUpdate]:
         """全trackのpending confidenceを評価し、新たな確定結果を返す。"""
         updates = []
@@ -254,7 +259,7 @@ class VehicleTracker:
             if state.confidence != "pending":
                 continue
 
-            resolved = state.resolve_confidence(current_frame, self.max_frame_gap)
+            resolved = state.resolve_confidence(current_time_sec, self.max_gap_sec)
             if resolved in ("high", "normal"):
                 self._record_confidence_resolution(resolved)
                 updates.append(ConfidenceUpdate(
@@ -289,20 +294,20 @@ class VehicleTracker:
         else:
             self.normal_confidence_count += 1
 
-    def cleanup_stale_tracks(self, current_frame: int):
+    def cleanup_stale_tracks(self, current_time_sec: float):
         """
         古い追跡を削除
 
         Args:
-            current_frame: 現在のフレーム番号
+            current_time_sec: 現在のストリーム時刻(秒)
         """
         track_ids_to_remove = []
 
         for track_id, state in self.states.items():
-            frames_since_update = current_frame - state.last_update_frame
+            elapsed_since_update = current_time_sec - state.last_update_time
 
             if (
-                frames_since_update > self.cleanup_threshold
+                elapsed_since_update > self.cleanup_threshold_sec
                 and state.confidence != "pending"
             ):
                 track_ids_to_remove.append(track_id)
