@@ -1,6 +1,12 @@
 """
 アノテーション動画生成モジュール
 検知結果を可視化した動画を生成
+
+フレームへ焼き込む文字列はすべてASCIIで書く。cv2.putTextが使うHersheyフォントは
+ASCIIしか持たず、非ASCIIは1文字ずつ'?'として描かれるため（"Line1 (入口側)" は
+"Line1 (???)" になる）。この環境のOpenCVはfreetypeモジュールを含まないので、
+TTFでの描画に切り替える手も使えない。日本語を出したい説明は、フレームではなく
+端末の出力側に置く。
 """
 
 import cv2
@@ -8,6 +14,10 @@ import numpy as np
 from typing import Dict, Tuple
 from tracking_parking.config import Line
 from tracking_parking.detection.tracker import VehicleTracker, VehicleState
+
+# フレームへ焼き込むライン名（ASCII限定。理由はモジュールのdocstring）
+LINE1_LABEL = "Line1 (entry)"
+LINE2_LABEL = "Line2 (lot)"
 
 
 class VideoAnnotator:
@@ -60,7 +70,7 @@ class VideoAnnotator:
         )
         self._draw_text_with_background(
             frame,
-            "Line1 (入口側)",
+            LINE1_LABEL,
             (line1_mid[0], line1_mid[1] - 10),
             self.COLOR_LINE1
         )
@@ -80,7 +90,7 @@ class VideoAnnotator:
         )
         self._draw_text_with_background(
             frame,
-            "Line2 (駐車場側)",
+            LINE2_LABEL,
             (line2_mid[0], line2_mid[1] - 10),
             self.COLOR_LINE2
         )

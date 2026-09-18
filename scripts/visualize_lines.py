@@ -154,12 +154,12 @@ def visualize(video_path: str, config: Config, output_path: str = None, start_fr
                 side2 = signed_distance(vehicle_point, config.line2)
 
                 # 符号付き距離とMARGIN_PX比較を表示
-                status1 = "OK" if abs(side1) >= config.margin_px else f"小({abs(side1):.1f}<{config.margin_px})"
-                status2 = "OK" if abs(side2) >= config.margin_px else f"小({abs(side2):.1f}<{config.margin_px})"
+                status1 = "OK" if abs(side1) >= config.margin_px else f"near({abs(side1):.1f}<{config.margin_px})"
+                status2 = "OK" if abs(side2) >= config.margin_px else f"near({abs(side2):.1f}<{config.margin_px})"
 
                 # 駐車場側かどうか
-                is_parking_side1 = "駐車場側" if side1 * parking_side_line1 > 0 else "入口側"
-                is_parking_side2 = "駐車場側" if side2 * parking_side_line2 > 0 else "入口側"
+                is_parking_side1 = "lot" if side1 * parking_side_line1 > 0 else "entry"
+                is_parking_side2 = "lot" if side2 * parking_side_line2 > 0 else "entry"
 
                 # 情報を表示
                 info_text = [
@@ -206,10 +206,10 @@ def visualize(video_path: str, config: Config, output_path: str = None, start_fr
         # 凡例を表示
         legend_y = 60
         legends = [
-            ("Line1 (緑): 入口側ライン", (0, 255, 0)),
-            ("Line2 (黄): 駐車場側ライン", (0, 255, 255)),
-            ("赤点: 車両代表点", (0, 0, 255)),
-            ("マゼンタ: 駐車場基準点", (255, 0, 255))
+            ("Line1 (green): entry line", (0, 255, 0)),
+            ("Line2 (yellow): lot line", (0, 255, 255)),
+            ("red dot: vehicle point", (0, 0, 255)),
+            ("magenta: parking reference", (255, 0, 255))
         ]
         for text, color in legends:
             cv2.putText(vis_frame, text, (10, legend_y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)

@@ -18,6 +18,7 @@ import os
 from typing import List, Tuple, Optional
 
 from tracking_parking.common.camera import apply_camera_capture_settings
+from tracking_parking.output.video_writer import LINE1_LABEL, LINE2_LABEL
 from tracking_parking.config import CameraCaptureSettings
 
 # カメラを開いた直後は露出が安定しない。捨てる枚数。
@@ -86,13 +87,25 @@ class LineSetupGUI:
         # クリックされた点を保存
         self.points: List[Tuple[int, int]] = []
 
-        # 点のラベル
+        # 点のラベル（端末への案内用。ここは日本語が正しく出る）
         self.labels = [
             "Line1 始点(入口側)",
             "Line1 終点(入口側)",
             "Line2 始点(駐車場側)",
             "Line2 終点(駐車場側)",
             "駐車場基準点"
+        ]
+
+        # フレームへ焼き込む用。cv2.putTextのHersheyフォントはASCIIしか持たず、
+        # 非ASCIIは1文字ずつ'?'になる（"Line1 始点(入口側)" → "Line1 ??(???)"）。
+        # このOpenCVはfreetypeを含まないためTTF描画へ逃げられない。端末側の
+        # self.labelsと1対1で対応させる（順序が同じであることをテストで固定）。
+        self.overlay_labels = [
+            "Line1 start (entry)",
+            "Line1 end (entry)",
+            "Line2 start (lot)",
+            "Line2 end (lot)",
+            "Parking reference"
         ]
 
         # 現在のフレーム
@@ -137,7 +150,7 @@ class LineSetupGUI:
             cv2.circle(self.display_frame, point, 5, color, -1)
             cv2.putText(
                 self.display_frame,
-                self.labels[i],
+                self.overlay_labels[i],
                 (point[0] + 10, point[1]),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.5,
@@ -156,7 +169,7 @@ class LineSetupGUI:
             )
             cv2.putText(
                 self.display_frame,
-                "Line1 (入口側)",
+                LINE1_LABEL,
                 ((self.points[0][0] + self.points[1][0]) // 2,
                  (self.points[0][1] + self.points[1][1]) // 2 - 10),
                 cv2.FONT_HERSHEY_SIMPLEX,
@@ -176,7 +189,7 @@ class LineSetupGUI:
             )
             cv2.putText(
                 self.display_frame,
-                "Line2 (駐車場側)",
+                LINE2_LABEL,
                 ((self.points[2][0] + self.points[3][0]) // 2,
                  (self.points[2][1] + self.points[3][1]) // 2 - 10),
                 cv2.FONT_HERSHEY_SIMPLEX,
@@ -185,9 +198,9 @@ class LineSetupGUI:
                 2
             )
 
-        # 次にクリックする点の説明を表示
+        # 次にクリックする点の説明を表示（焼き込むのでASCII側を使う）
         if len(self.points) < len(self.labels):
-            instruction = f"次: {self.labels[len(self.points)]} をクリック"
+            instruction = f"Next: click {self.overlay_labels[len(self.points)]}"
             cv2.putText(
                 self.display_frame,
                 instruction,
