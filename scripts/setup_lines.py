@@ -112,8 +112,11 @@ class LineSetupGUI:
         self.frame: Optional[cv2.Mat] = None
         self.display_frame: Optional[cv2.Mat] = None
 
-        # ウィンドウ名
-        self.window_name = "ライン座標設定"
+        # ウィンドウ名。非ASCIIにすると、このOpenCV(Qtバックエンド)では
+        # namedWindowは通るのにsetMouseCallbackの名前引きがNULLを返して落ちる
+        # （NULL window handler in setMouseCallbackImpl）。クリックが要なので
+        # ここはASCIIで固定する。案内は端末側に日本語で出す。
+        self.window_name = "Line Setup"
 
     def mouse_callback(self, event, x, y, flags, param):
         """
@@ -213,6 +216,19 @@ class LineSetupGUI:
 
         cv2.imshow(self.window_name, self.display_frame)
 
+    def _window_closed(self) -> bool:
+        """ウィンドウが閉じられたかを返す。
+
+        ウィンドウマネージャの×で閉じられると、このOpenCV(Qtバックエンド)では
+        getWindowPropertyが0を返さずに例外を投げる（NULL guiReceiver）。
+        5点クリック後にウィンドウを閉じるのは保存を確定する正規の手順なので、
+        ここで例外が抜けると座標が保存されないまま落ちる。閉じられたものとして扱う。
+        """
+        try:
+            return cv2.getWindowProperty(self.window_name, cv2.WND_PROP_VISIBLE) < 1
+        except cv2.error:
+            return True
+
     def load_first_frame(self) -> bool:
         """
         ライン設定に使うフレームを1枚読み込む
@@ -307,7 +323,7 @@ class LineSetupGUI:
             key = cv2.waitKey(1) & 0xFF
 
             # 'q'キーまたはウィンドウが閉じられた
-            if key == ord('q') or cv2.getWindowProperty(self.window_name, cv2.WND_PROP_VISIBLE) < 1:
+            if key == ord('q') or self._window_closed():
                 break
 
             # 'r'キーでやり直し
