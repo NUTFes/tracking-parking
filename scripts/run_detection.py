@@ -547,8 +547,12 @@ def process_video(
                                 event["confidence"] = update.confidence
                                 event["line2_crossed"] = update.line2_crossed
                     if config.save_video or config.show_display:
+                        # frame_read_at はAPIへ送る detected_at と同じ値。
+                        # 動画に焼き込む時刻をイベント記録と一致させるため、
+                        # ここで別に now() を取らない。
                         annotated_frame = annotator.annotate_frame(
-                            frame, tracker, frame_id, core_ms
+                            frame, tracker, frame_id, core_ms,
+                            captured_at=frame_read_at,
                         )
                     else:
                         annotated_frame = frame

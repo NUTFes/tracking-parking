@@ -11,13 +11,51 @@ TTFでの描画に切り替える手も使えない。日本語を出したい�
 
 import cv2
 import numpy as np
-from typing import Dict, Tuple
+from datetime import datetime, timedelta, timezone
+from typing import Dict, Optional, Tuple
 from tracking_parking.config import Line
 from tracking_parking.detection.tracker import VehicleTracker, VehicleState
 
 # フレームへ焼き込むライン名（ASCII限定。理由はモジュールのdocstring）
 LINE1_LABEL = "Line1 (entry)"
 LINE2_LABEL = "Line2 (lot)"
+
+# 日本標準時。夏時間が無いため固定オフセットで厳密に表せる。
+# datetime.astimezone()（機体のタイムゾーン依存）ではなくこれへ変換するのは、
+# 機体の設定がUTCのままでも動画には日本時刻を焼き込むため。事後分析では
+# この時刻がイベント記録との突合の手がかりになる。
+JST = timezone(timedelta(hours=9))
+
+
+def format_jst(moment: datetime) -> str:
+    """時刻を日本標準時のASCII文字列にする。
+
+    秒まで出すのは、事後分析でイベント記録（APIへ送るdetected_at）と
+    動画の位置を突き合わせるのに秒が要るため。
+    """
+    return moment.astimezone(JST).strftime("%Y-%m-%d %H:%M:%S JST")
+
+
+def build_overlay_lines(summary: Dict, frame_id: int, processing_time_ms: float,
+                        captured_at: Optional[datetime] = None) -> list:
+    """オーバーレイに出す行を組み立てる。
+
+    描画から切り離しているのは、フレームへ焼き込む文字列がASCIIに収まっている
+    かをテストで確認できるようにするため（非ASCIIは'?'になるだけで例外が出ない）。
+    """
+    lines = []
+    if captured_at is not None:
+        lines.append(format_jst(captured_at))
+    lines += [
+        f"Frame: {frame_id}",
+        f"IN: {summary['total_in']}  OUT: {summary['total_out']}",
+        f"Parked: {summary['current_parked']}",
+        f"High: {summary['high_confidence_events']}  "
+        f"Normal: {summary['normal_confidence_events']}",
+        f"Active: {summary['active_tracks']}",
+        f"Time: {processing_time_ms:.1f}ms",
+    ]
+    return lines
 
 
 class VideoAnnotator:
@@ -148,7 +186,8 @@ class VideoAnnotator:
                           frame: np.ndarray,
                           tracker: VehicleTracker,
                           frame_id: int,
-                          processing_time_ms: float) -> np.ndarray:
+                          processing_time_ms: float,
+                          captured_at: Optional[datetime] = None) -> np.ndarray:
         """
         カウント情報をオーバーレイ表示
 
@@ -157,29 +196,24 @@ class VideoAnnotator:
             tracker: VehicleTracker
             frame_id: フレーム番号
             processing_time_ms: 処理時間(ms)
+            captured_at: フレームを取得した時刻。省略時は時刻行を出さない。
 
         Returns:
             np.ndarray: オーバーレイ表示後のフレーム
         """
         summary = tracker.get_summary()
+        texts = build_overlay_lines(
+            summary, frame_id, processing_time_ms, captured_at
+        )
 
-        # 背景を半透明の黒で描画
-        overlay = frame.copy()
-        cv2.rectangle(overlay, (10, 10), (350, 180), self.COLOR_BG, -1)
-        cv2.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)
-
-        # 統計情報を表示
+        # 背景を半透明の黒で描画。高さは行数から決める（固定値にすると行を
+        # 足したときに文字が枠の外へはみ出す）。
         y = 35
         line_height = 25
-
-        texts = [
-            f"Frame: {frame_id}",
-            f"IN: {summary['total_in']}  OUT: {summary['total_out']}",
-            f"Parked: {summary['current_parked']}",
-            f"High: {summary['high_confidence_events']}  Normal: {summary['normal_confidence_events']}",
-            f"Active: {summary['active_tracks']}",
-            f"Time: {processing_time_ms:.1f}ms"
-        ]
+        box_bottom = y + line_height * len(texts) - line_height + 20
+        overlay = frame.copy()
+        cv2.rectangle(overlay, (10, 10), (350, box_bottom), self.COLOR_BG, -1)
+        cv2.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)
 
         for text in texts:
             cv2.putText(
@@ -199,7 +233,8 @@ class VideoAnnotator:
                       frame: np.ndarray,
                       tracker: VehicleTracker,
                       frame_id: int,
-                      processing_time_ms: float = 0.0) -> np.ndarray:
+                      processing_time_ms: float = 0.0,
+                      captured_at: Optional[datetime] = None) -> np.ndarray:
         """
         フレームに全てのアノテーションを追加
 
@@ -208,6 +243,7 @@ class VideoAnnotator:
             tracker: VehicleTracker
             frame_id: フレーム番号
             processing_time_ms: 処理時間(ms)
+            captured_at: フレームを取得した時刻。省略時は時刻行を出さない。
 
         Returns:
             np.ndarray: アノテーション後のフレーム
@@ -226,7 +262,8 @@ class VideoAnnotator:
             annotated,
             tracker,
             frame_id,
-            processing_time_ms
+            processing_time_ms,
+            captured_at
         )
 
         return annotated
