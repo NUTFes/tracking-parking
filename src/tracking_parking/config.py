@@ -24,6 +24,61 @@ def _optional_int_env(name: str) -> Optional[int]:
         raise ValueError(f"{name} は整数で指定してください: {raw!r}")
 
 
+@dataclass(frozen=True)
+class CameraCaptureSettings:
+    """カメラ入力の要求解像度。
+
+    Configから切り出しているのは、setup_lines.py がライン設定に使うフレームを
+    検知ループと同じ解像度で掴む必要がある一方、Configが要求する
+    HOME_DIR / MODEL_PATH / ライン座標を必要としないため。パーサを1箇所に
+    保つことで、両者が別の既定値を持つ事故を防ぐ。
+    """
+
+    width: Optional[int]
+    height: Optional[int]
+    fourcc: Optional[str]
+
+    @classmethod
+    def from_env(cls, env_path: str = None) -> "CameraCaptureSettings":
+        """envから読み込む。未設定はNoneのまま返す。
+
+        0やデフォルト値で埋めないのは、「デバイス既定に任せる」という意思と
+        「明示的に指定した」を区別できなくするため。
+        """
+        if env_path:
+            load_dotenv(env_path)
+        else:
+            load_dotenv()
+
+        return cls(
+            width=_optional_int_env("CAMERA_WIDTH"),
+            height=_optional_int_env("CAMERA_HEIGHT"),
+            fourcc=os.getenv("CAMERA_FOURCC") or None,
+        )
+
+    def validation_errors(self) -> list:
+        """設定値の問題を文字列のリストで返す（Config.validate()と共有）。"""
+        errors = []
+
+        # 片方だけの指定を弾くのは、幅だけ指定してもドライバが対応する組み合わせへ
+        # 勝手に丸めるため、意図した画角にならないまま気づけないため。
+        if (self.width is None) != (self.height is None):
+            errors.append(
+                "CAMERA_WIDTHとCAMERA_HEIGHTは両方指定するか、両方省略してください"
+            )
+
+        for name, value in (("CAMERA_WIDTH", self.width), ("CAMERA_HEIGHT", self.height)):
+            if value is not None and value <= 0:
+                errors.append(f"{name}は正の整数である必要があります: {value}")
+
+        if self.fourcc is not None and len(self.fourcc) != 4:
+            errors.append(
+                f"CAMERA_FOURCCは4文字である必要があります(例: MJPG): {self.fourcc!r}"
+            )
+
+        return errors
+
+
 @dataclass
 class Line:
     """ライン情報を保持するデータクラス"""
@@ -179,11 +234,8 @@ class Config:
         save_logs = os.getenv("SAVE_LOGS", "true").lower() == "true"
         show_display = os.getenv("SHOW_DISPLAY", "false").lower() == "true"
 
-        # カメラ入力の解像度。未設定はNoneのまま渡し、デバイス既定を使う意思と
-        # 区別できるようにする（0やデフォルト値で埋めない）。
-        camera_width = _optional_int_env("CAMERA_WIDTH")
-        camera_height = _optional_int_env("CAMERA_HEIGHT")
-        camera_fourcc = os.getenv("CAMERA_FOURCC") or None
+        # カメラ入力の解像度。setup_lines.py と同じパーサを通す。
+        camera = CameraCaptureSettings.from_env(env_path)
 
         return cls(
             home_dir=home_dir,
@@ -202,9 +254,9 @@ class Config:
             save_video=save_video,
             save_logs=save_logs,
             show_display=show_display,
-            camera_width=camera_width,
-            camera_height=camera_height,
-            camera_fourcc=camera_fourcc
+            camera_width=camera.width,
+            camera_height=camera.height,
+            camera_fourcc=camera.fourcc
         )
 
     def validate(self):
@@ -238,23 +290,12 @@ class Config:
         if self.cleanup_threshold_sec < 0:
             errors.append(f"cleanup_threshold_secは0以上の値である必要があります: {self.cleanup_threshold_sec}")
 
-        # カメラ解像度のチェック
-        # 片方だけの指定を弾くのは、幅だけ指定してもドライバが対応する組み合わせへ
-        # 勝手に丸めるため、意図した画角にならないまま気づけないため。
-        if (self.camera_width is None) != (self.camera_height is None):
-            errors.append(
-                "CAMERA_WIDTHとCAMERA_HEIGHTは両方指定するか、両方省略してください"
-            )
-
-        for name, value in (("CAMERA_WIDTH", self.camera_width),
-                            ("CAMERA_HEIGHT", self.camera_height)):
-            if value is not None and value <= 0:
-                errors.append(f"{name}は正の整数である必要があります: {value}")
-
-        if self.camera_fourcc is not None and len(self.camera_fourcc) != 4:
-            errors.append(
-                f"CAMERA_FOURCCは4文字である必要があります(例: MJPG): {self.camera_fourcc!r}"
-            )
+        # カメラ解像度のチェック（setup_lines.py と同じ検査を共有する）
+        errors.extend(CameraCaptureSettings(
+            width=self.camera_width,
+            height=self.camera_height,
+            fourcc=self.camera_fourcc,
+        ).validation_errors())
 
         # 処理方式のチェック
         if self.method != "hybrid":

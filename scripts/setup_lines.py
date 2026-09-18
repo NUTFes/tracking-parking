@@ -17,6 +17,11 @@ import argparse
 import os
 from typing import List, Tuple, Optional
 
+from tracking_parking.common.camera import apply_camera_capture_settings
+from tracking_parking.config import CameraCaptureSettings
+
+# カメラを開いた直後は露出が安定しない。捨てる枚数。
+CAMERA_WARMUP_FRAMES = 10
 
 LINE_ENV_KEYS = (
     "LINE1_START_X", "LINE1_START_Y", "LINE1_END_X", "LINE1_END_Y",
@@ -66,10 +71,10 @@ def apply_line_values(existing: str, values: dict) -> str:
 class LineSetupGUI:
     """ライン座標設定GUI"""
 
-    def __init__(self, video_path: str, env_path: str = None):
+    def __init__(self, video_path, env_path: str = None):
         """
         Args:
-            video_path: 動画ファイルのパス
+            video_path: 動画ファイルのパス(str)、またはカメラデバイスID(int)
             env_path: .envファイルのパス(Noneの場合はリポジトリルートの.envを使用)
         """
         self.video_path = video_path
@@ -197,23 +202,58 @@ class LineSetupGUI:
 
     def load_first_frame(self) -> bool:
         """
-        動画の最初のフレームを読み込む
+        ライン設定に使うフレームを1枚読み込む
+
+        カメラ入力のときは、検知ループと同じ解像度を要求してから掴む。ここで
+        掴んだフレーム上でクリックした座標がそのままLINE1_*/LINE2_*になるため、
+        実行時の解像度と違うと座標の意味が変わる。
 
         Returns:
             bool: 成功した場合True
         """
+        is_camera = not isinstance(self.video_path, str)
         cap = cv2.VideoCapture(self.video_path)
 
         if not cap.isOpened():
-            print(f"エラー: 動画ファイルを開けません: {self.video_path}")
+            target = f"カメラ{self.video_path}" if is_camera else self.video_path
+            print(f"エラー: 映像を開けません: {target}")
             return False
 
+        if is_camera:
+            camera = CameraCaptureSettings.from_env(self.env_path)
+            errors = camera.validation_errors()
+            if errors:
+                cap.release()
+                print("設定エラー:\n" + "\n".join(f"  - {e}" for e in errors))
+                return False
+            apply_camera_capture_settings(
+                cap, width=camera.width, height=camera.height, fourcc=camera.fourcc
+            )
+            # 開いた直後は露出が安定せず、暗いフレームでラインを引くことになる。
+            for _ in range(CAMERA_WARMUP_FRAMES):
+                cap.read()
+
         ret, frame = cap.read()
+        actual = (
+            int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
+            int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
+        )
         cap.release()
 
         if not ret:
-            print(f"エラー: 動画フレームを読み込めません: {self.video_path}")
+            target = f"カメラ{self.video_path}" if is_camera else self.video_path
+            print(f"エラー: フレームを読み込めません: {target}")
             return False
+
+        if is_camera:
+            print(f"✓ カメラ{self.video_path}から取得: {actual[0]}x{actual[1]}")
+            # 要求が丸められたまま座標を決めると、検知ループ側も同じ解像度で
+            # 開くとは限らず（別のenvを使うなど）、ずれに気づけない。
+            if camera.width is not None and actual != (camera.width, camera.height):
+                print(
+                    f"[WARN] カメラが要求解像度を受理しませんでした: "
+                    f"要求 {camera.width}x{camera.height} → 実際 {actual[0]}x{actual[1]}"
+                )
 
         self.frame = frame
         self.display_frame = frame.copy()
@@ -305,10 +345,16 @@ def main():
     parser = argparse.ArgumentParser(
         description="GUIでライン座標を設定"
     )
-    parser.add_argument(
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument(
         "--video",
-        required=True,
         help="動画ファイルのパス"
+    )
+    source.add_argument(
+        "--camera",
+        type=int,
+        help="カメラデバイスID(0=デフォルトカメラ)。"
+             "解像度は--envのCAMERA_WIDTH/HEIGHT/FOURCCに従う"
     )
     parser.add_argument(
         "--env",
@@ -319,12 +365,12 @@ def main():
     args = parser.parse_args()
 
     # 動画ファイルの存在確認
-    if not os.path.exists(args.video):
+    if args.video is not None and not os.path.exists(args.video):
         print(f"エラー: 動画ファイルが見つかりません: {args.video}")
         return 1
 
     # GUIを実行
-    gui = LineSetupGUI(args.video, args.env)
+    gui = LineSetupGUI(args.video if args.video is not None else args.camera, args.env)
 
     if gui.run():
         # 設定を保存

@@ -23,6 +23,7 @@ from tracking_parking.detection.line_crossing import LineCrossingDetector, get_v
 from tracking_parking.detection.tracker import VehicleTracker
 from tracking_parking.output.video_writer import VideoAnnotator
 from tracking_parking.output.event_logger import EventLogger
+from tracking_parking.common.camera import apply_camera_capture_settings as apply_capture_settings
 from tracking_parking.common.frame_stats import compute_timing_stats
 from tracking_parking.common.time_windows import frames_from_seconds
 from tracking_parking.common.frame_timing import (
@@ -64,23 +65,17 @@ CROSSING_METHOD = "hysteresis_v1"  # W&B上でPre/Post-3bのrunを区別する�
 
 
 def apply_camera_capture_settings(cap, config: Config) -> None:
-    """カメラの要求解像度をドライバへ指定する。カメラ入力のときだけ呼ぶ。
+    """Configのカメラ設定をキャプチャへ要求する。
 
-    指定しないとデバイス既定で開く（Logitech C270は640x480）。ライン座標は
-    別解像度のクリップ上で設定されるため、実行時の解像度がそれと違うと座標が
-    全てずれる。動画ファイル入力では解像度はファイル側が決めるので触らない。
-
-    FOURCCを先に設定するのは、解像度だけ指定しても対応しない組み合わせが
-    あるため（C270のYUYVは640x480までで、1280x720はMJPGでしか出ない）。
-
-    要求が通るとは限らずドライバは近い値へ丸める。呼び出し側は設定後に
-    必ず実測値を読み直す必要がある（この関数は要求するだけで、保証しない）。
+    実処理は common/camera.py に置いている。setup_lines.py がライン設定に
+    使うフレームを、この検知ループと同じ解像度で掴む必要があるため。
     """
-    if config.camera_fourcc:
-        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*config.camera_fourcc))
-    if config.camera_width is not None and config.camera_height is not None:
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, config.camera_width)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config.camera_height)
+    apply_capture_settings(
+        cap,
+        width=config.camera_width,
+        height=config.camera_height,
+        fourcc=config.camera_fourcc,
+    )
 
 
 @dataclass(frozen=True)
